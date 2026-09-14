@@ -206,7 +206,7 @@ class Handler(BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
 
         if path in ("/", "/index.html"):
-            return self._send_file(WEB_ROOT / "index.html")
+            return self._send_index()
         if path == "/api/session":
             return self._send_file(self.session_path)
         if path == "/api/layout":
@@ -274,6 +274,35 @@ class Handler(BaseHTTPRequestHandler):
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self._send(HTTPStatus.OK, b'{"saved":true}', "application/json")
 
+
+    def _send_index(self) -> None:
+        """Serves the editor page with a version stamped onto every local asset.
+
+        `Cache-Control: no-store` only helps from the moment it is first seen. A browser
+        that cached a script before then will keep serving it on an ordinary reload, and
+        the symptom - half the editor quietly not working - gives no hint of the cause.
+        A stamp derived from the file's own mtime sidesteps the cache entirely.
+        """
+        page = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+
+        def stamp(match: re.Match) -> str:
+            attribute, url = match.group(1), match.group(2)
+            if "//" in url:
+                return match.group(0)            # leave anything remote alone
+            asset = (WEB_ROOT / url).resolve()
+            if not asset.is_file():
+                return match.group(0)
+            return f'{attribute}="{url}?v={int(asset.stat().st_mtime)}"'
+
+        page = re.sub(r'(src|href)="([^"]+)"', stamp, page)
+        body = page.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _browse(self, query: str) -> None:
         """Lists one directory, so the editor can pick source files without uploading them.

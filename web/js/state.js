@@ -370,13 +370,22 @@
 
   async function browse(path) {
     const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    const response = await fetch(`/api/browse${query}`);
-    if (!response.ok) {
-      dom['picker-status'].textContent = (await response.json()).error || 'cannot read that';
-      return;
+    try {
+      const response = await fetch(`/api/browse${query}`);
+      if (!response.ok) {
+        // Not every failure answers in JSON, and a listing that silently does not
+        // appear is the hardest kind of breakage to place.
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.error || `the server answered ${response.status}`);
+      }
+      listing = await response.json();
+      dom['picker-status'].textContent = '';
+      renderListing();
+    } catch (error) {
+      listing = null;
+      dom['picker-status'].textContent = `cannot list that directory: ${error.message}`;
+      dom['picker-build'].disabled = true;
     }
-    listing = await response.json();
-    renderListing();
   }
 
   function renderListing() {

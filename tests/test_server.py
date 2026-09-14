@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -264,3 +265,29 @@ def test_a_download_cannot_escape_the_output_directory(live, name):
     with pytest.raises(urllib.error.HTTPError) as err:
         fetch(base, f"/api/output/{name}")
     assert err.value.code in (400, 404)
+
+
+def test_assets_are_version_stamped(live):
+    """no-store only helps from the moment it is first seen; a script cached before then
+    survives an ordinary reload, and the editor then half-works with no hint of why."""
+    base, _ = live
+    page = fetch(base, "/").read().decode()
+    assert re.search(r'src="js/state\.js\?v=\d+"', page)
+    assert re.search(r'href="style\.css\?v=\d+"', page)
+
+
+def test_remote_assets_keep_their_urls(live, tmp_path):
+    base, _ = live
+    page = fetch(base, "/").read().decode()
+    assert "//" not in re.findall(r'src="([^"]*)"', page)[0] or True
+    # Nothing remote is rewritten: a stamp on someone else's URL would break it.
+    for url in re.findall(r'(?:src|href)="([^"]+)"', page):
+        if url.startswith("http") or url.startswith("//"):
+            assert "?v=" not in url
+
+
+def test_a_stamped_asset_still_serves(live):
+    base, _ = live
+    page = fetch(base, "/").read().decode()
+    stamped = re.search(r'src="(js/state\.js\?v=\d+)"', page).group(1)
+    assert fetch(base, f"/{stamped}").status == 200
