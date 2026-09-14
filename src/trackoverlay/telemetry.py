@@ -192,3 +192,25 @@ def moving_average(values: list[float], window: int) -> list[float]:
         lo, hi = max(0, i - half), min(len(values), i + half + 1)
         out.append(sum(values[lo:hi]) / (hi - lo))
     return out
+
+
+def resample_uniform(tel: Telemetry, rate_hz: float) -> Telemetry:
+    """Перекладывает все каналы на строго равномерную сетку.
+
+    Логгер изредка теряет сэмпл: на сессии 3429 один шаг вышел 79 мс вместо 40. Если
+    считать сетку равномерной как есть, всё после пропуска уедет на 39 мс — это больше
+    двух кадров при 60 fps. А хранить рядом с каналами полную шкалу времени значит
+    добавить в файл ещё сорок тысяч чисел и заставить браузер искать по ней на каждом
+    кадре. Пересборка на ровную сетку снимает оба вопроса разом.
+    """
+    if len(tel.times) < 2:
+        return tel
+    import numpy as np
+
+    source = np.asarray(tel.times, float)
+    grid = np.arange(source[0], source[-1], 1.0 / rate_hz)
+    out = Telemetry(times=grid.tolist())
+    for name, channel in tel.channels.items():
+        values = np.interp(grid, source, np.asarray(channel.samples, float))
+        out.add(name, channel.role, channel.unit, values.tolist())
+    return out

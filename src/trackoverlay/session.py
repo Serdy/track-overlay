@@ -45,7 +45,9 @@ class Session:
                 "start_utc": stamp.isoformat().replace("+00:00", "Z"),
                 "track": self.track,
                 "duration_s": round(self.telemetry.times[-1] - self.start_utc, 3),
-                "rate_hz": round(self.telemetry.rate_hz, 2),
+                # Сетка равномерная по построению, поэтому момент сэмпла i это
+                # ровно i / rate_hz — браузеру не нужна отдельная шкала времени.
+                "rate_hz": round(self.telemetry.rate_hz, 4),
             },
             "channels": {
                 name: {
@@ -144,21 +146,18 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
 
     parts = [racebox.read_csv(p) for p in csvs] + [racebox.read_vbo(p) for p in vbos]
     data = racebox.merge(*parts)
-    tel = _build_telemetry(data)
-    start_utc = data.times[0]
+    tel = T.resample_uniform(_build_telemetry(data), round(data.rate_hz))
+    start_utc = tel.times[0]
 
-    gate = L.detect_start_finish(data.columns["lat"], data.columns["lon"],
-                                 data.columns.get("heading_deg")
-                                 or T.heading_from_track(data.columns["lat"],
-                                                         data.columns["lon"]),
-                                 data.columns["speed_kmh"])
-    crossings = L.find_crossings(data.columns["lat"], data.columns["lon"],
-                                 data.times, gate)
-    found_laps = L.split_laps(data.times, crossings)
+    lats, lons = tel["lat"], tel["lon"]
+    gate = L.detect_start_finish(lats, lons, T.heading_from_track(lats, lons),
+                                 tel["speed"])
+    crossings = L.find_crossings(lats, lons, tel.times, gate)
+    found_laps = L.split_laps(tel.times, crossings)
     if not found_laps:
         raise SessionError(
             "не удалось разметить ни одного круга — трек короче круга или ворота не найдены")
-    envelope = L.build_envelope(data.columns["lat"], data.columns["lon"], found_laps)
+    envelope = L.build_envelope(lats, lons, found_laps)
 
     found_clips = clips.discover(video_files) if video_files else []
     aligned = _align_clips(found_clips, tel, start_utc)

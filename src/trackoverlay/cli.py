@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .server import serve
 from .session import SessionError, build_session
 
 
@@ -30,6 +31,13 @@ def _build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve(args: argparse.Namespace) -> int:
+    if not args.session.exists():
+        raise SessionError(f"нет файла {args.session} — сначала выполните build")
+    serve(args.session, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="trackoverlay",
@@ -42,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("-o", "--output", type=Path, default=Path("out/session.json"))
     build.add_argument("--track", default="", help="название трассы для заголовка")
     build.set_defaults(func=_build)
+
+    run = sub.add_parser("serve", help="открыть редактор в браузере")
+    run.add_argument("session", type=Path, nargs="?", default=Path("out/session.json"))
+    run.add_argument("-p", "--port", type=int, default=8712)
+    run.add_argument("--no-browser", action="store_true")
+    run.set_defaults(func=_serve)
 
     args = parser.parse_args(argv)
     try:
