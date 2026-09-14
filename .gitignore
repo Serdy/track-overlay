@@ -11,3 +11,6 @@ data/*.MP4
 data/*.LRV
 data/*.THM
 out/
+
+# Browser automation artifacts
+.playwright-cli/
