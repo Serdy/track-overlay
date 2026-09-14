@@ -42,6 +42,7 @@
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
                       'swap', 'segment', 'reset', 'cut-marks', 'pending-range',
+                      'resolution', 'nudge', 'nudge-value',
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result']) {
       dom[id] = document.getElementById(id);
@@ -67,12 +68,25 @@
     scoreSides = scores ? Display.scoreSide(scores) : null;
     layout = await loadLayout();
 
+    // Keep the automatic offset so the manual slider shifts from it, not from zero.
+    for (const clip of session.clips) clip._baseOffset = clip.offset_s;
+
     describe();
     buildReadout();
     buildLapMarks();
     buildSlots();
     renderCutMarks();
     wire();
+
+    // Only now, with the readout cells and video tags in place, is it safe to restore
+    // anything that redraws.
+    if (layout.output && layout.output.width) {
+      dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
+    }
+    if (layout.nudge_s) {
+      dom.nudge.value = String(layout.nudge_s);
+      applyNudge(layout.nudge_s);
+    }
 
     Clock.onChange(clock, render);
     window.addEventListener('resize', resizeOverlay);
@@ -98,7 +112,10 @@
       const cuts = (saved.cuts || []).filter(
         (cut) => known.has(cut.main) && (cut.pip === null || known.has(cut.pip)));
       if (!cuts.length) return fallback;
-      return Object.assign({}, fallback, saved, { cuts: Cuts.simplify(cuts) });
+      const merged = Object.assign({}, fallback, saved, { cuts: Cuts.simplify(cuts) });
+      const checked = Layout.validate(merged, [...known], widgetSizes());
+      if (!checked.ok) console.warn('layout repaired:', checked.errors.join('; '));
+      return checked.layout;
     } catch (error) {
       return fallback;
     }
@@ -258,6 +275,97 @@
   }
 
   let exporting = null;
+  let dragging = null;
+
+  /** Widget sizes as fractions of the frame, for hit testing and clamping. */
+  function widgetSizes() {
+    const sizes = {};
+    for (const id of Widgets.ids()) sizes[id] = Widgets.get(id).defaultSize;
+    return sizes;
+  }
+
+  /** Pointer position as a fraction of the stage, which is what the layout stores. */
+  function framePoint(event) {
+    const box = dom.overlay.getBoundingClientRect();
+    return [(event.clientX - box.left) / box.width, (event.clientY - box.top) / box.height];
+  }
+
+  function beginDrag(event) {
+    const [x, y] = framePoint(event);
+    const hit = Layout.hitTest(layout, widgetSizes(), x, y);
+    const pip = (layout.slots || []).find((slot) => slot.id === 'pip');
+    const onPip = pip && x >= pip.rect[0] && x <= pip.rect[0] + pip.rect[2]
+                      && y >= pip.rect[1] && y <= pip.rect[1] + pip.rect[3];
+
+    // A widget wins over the inset: it sits on top and is the smaller target.
+    if (hit) dragging = { kind: 'widget', index: hit.index, x, y };
+    else if (onPip) dragging = { kind: 'pip', x, y, rect: [...pip.rect] };
+    else return;
+
+    dom.overlay.classList.add('dragging');
+    dom.overlay.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function continueDrag(event) {
+    if (!dragging) return;
+    const [x, y] = framePoint(event);
+    const dx = x - dragging.x;
+    const dy = y - dragging.y;
+    if (dragging.kind === 'widget') {
+      layout = Layout.moveWidget(layout, dragging.index, dx, dy, widgetSizes());
+    } else {
+      const r = dragging.rect;
+      layout = Layout.setSlotRect(layout, 'pip', [r[0] + dx, r[1] + dy, r[2], r[3]]);
+    }
+    dragging.x = x;
+    dragging.y = y;
+    if (dragging.kind === 'pip') dragging.rect = [...layout.slots.find((s) => s.id === 'pip').rect];
+    invalidateMap();
+    for (const slot of videos) slot.slot = null;     // force the inset to be re-placed
+    render(clock.time);
+  }
+
+  function endDrag(event) {
+    if (!dragging) return;
+    dragging = null;
+    dom.overlay.classList.remove('dragging');
+    if (event) dom.overlay.releasePointerCapture(event.pointerId);
+    saveLayout();
+  }
+
+  /** The wheel resizes whatever is under the cursor. */
+  function onWheel(event) {
+    const [x, y] = framePoint(event);
+    const hit = Layout.hitTest(layout, widgetSizes(), x, y);
+    const factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
+    if (hit) {
+      layout = Layout.scaleWidget(layout, hit.index, factor);
+    } else {
+      const pip = (layout.slots || []).find((slot) => slot.id === 'pip');
+      if (!pip) return;
+      const [px, py, pw, ph] = pip.rect;
+      if (x < px || x > px + pw || y < py || y > py + ph) return;
+      layout = Layout.setSlotRect(layout, 'pip',
+        [px, py, pw * factor, ph * factor]);
+      for (const slot of videos) slot.slot = null;
+    }
+    event.preventDefault();
+    invalidateMap();
+    render(clock.time);
+    saveLayout();
+  }
+
+  /** Shifts the telemetry against the video without re-running the whole build. */
+  function applyNudge(seconds) {
+    dom['nudge-value'].textContent = seconds.toFixed(2);
+    layout.nudge_s = seconds;
+    for (const clip of session.clips) {
+      clip.offset_s = clip._baseOffset + seconds;
+    }
+    render(clock.time);
+    saveLayout();
+  }
 
   /**
    * Draws one overlay frame at the output resolution.
@@ -340,6 +448,21 @@
     dom.segment.addEventListener('click', toggleSegment);
     dom.reset.addEventListener('click', resetCuts);
     dom.export.addEventListener('click', startExport);
+
+    dom.overlay.classList.add('editing');
+    dom.overlay.addEventListener('pointerdown', beginDrag);
+    dom.overlay.addEventListener('pointermove', continueDrag);
+    dom.overlay.addEventListener('pointerup', endDrag);
+    dom.overlay.addEventListener('pointercancel', endDrag);
+    dom.overlay.addEventListener('wheel', onWheel, { passive: false });
+
+    dom.resolution.addEventListener('change', () => {
+      const [w, h] = dom.resolution.value.split('x').map(Number);
+      layout.output = Object.assign({}, layout.output, { width: w, height: h });
+      saveLayout();
+    });
+
+    dom.nudge.addEventListener('input', () => applyNudge(Number(dom.nudge.value)));
     dom['export-cancel'].addEventListener('click', () => {
       if (exporting) exporting.abort();
     });
@@ -450,6 +573,7 @@
         ? Display.at(leanDisplay.value, session, time)
         : SessionModel.sampleAt(session, item.channel, time);
       const node = dom.readout.querySelector(`[data-channel="${item.channel}"]`);
+      if (!node) continue;
       node.textContent = value === null
         ? '—' : value.toFixed(item.digits) + (item.suffix || '');
     }

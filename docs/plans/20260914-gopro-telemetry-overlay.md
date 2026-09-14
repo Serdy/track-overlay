@@ -389,7 +389,7 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
       synchronisation, laps and the envelope
 - [x] serialise to `session.json` per the Technical Details schema; times inside are
       seconds from `session.start_utc`, not absolute stamps
-- [ ] CLI `trackoverlay build data/*.csv data/GH0?3429.MP4 -o out/session.json`
+- [x] CLI `trackoverlay build data/*.csv data/GH0?3429.MP4 -o out/session.json`
 - [x] clear error messages: no overlap, no `gpmd` found, mismatched sessions
 - [x] tests: a full run of session 3429 yields valid JSON with every expected key, 8 laps
       and one clip of three files
@@ -408,7 +408,7 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
       not work at all
 - [x] prefer the `.LRV` proxy for preview requests and the full file for rendering
 - [x] `POST /api/layout` saving `layout.json` to disk
-- [ ] CLI `trackoverlay serve out/session.json`, opening a browser
+- [x] CLI `trackoverlay serve out/session.json`, opening a browser
 - [x] tests: a range request returns 206 with the right slice; a request past the end gives 416
 - [x] failure tests: a request for a file outside the allowed directory (path traversal),
       a missing file
@@ -486,11 +486,11 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - [x] playback through the `.LRV` proxies; full resolution is never used in the preview
 - [x] every clip loaded but only the visible ones playing, all driven by the master clock
 - [x] account for each clip's individual `offset_s` when setting `currentTime`
-- [ ] drag and resize the PiP with the mouse, storing the result in normalised coordinates
-- [ ] tests: converting normalised coordinates to pixels and back at different container
+- [x] drag and resize the PiP with the mouse, storing the result in normalised coordinates
+- [x] tests: converting normalised coordinates to pixels and back at different container
       sizes; setting time with a clip offset applied
-- [ ] failure tests: a clip shorter than the timeline, a missing proxy file
-- [ ] run the tests — they must pass before task 14
+- [x] failure tests: a clip shorter than the timeline, a missing proxy file
+- [x] run the tests — they must pass before task 14
 
 ### Task 14: Camera switch points
 
@@ -516,14 +516,14 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `web/test/layout.test.js`
 - Modify: `web/index.html`
 
-- [ ] drag widgets with the mouse and change their scale
-- [ ] a manual sync-adjustment slider on top of the automatic result
-- [ ] choose the output resolution, defaulting to the main camera's
+- [x] drag widgets with the mouse and change their scale
+- [x] a manual sync-adjustment slider on top of the automatic result
+- [x] choose the output resolution, defaulting to the main camera's
 - [x] save and load `layout.json` through `POST /api/layout`
-- [ ] validation: coordinates within 0..1, `cuts` referencing existing clips
-- [ ] tests: a save/load round trip loses nothing; validation catches out-of-range
+- [x] validation: coordinates within 0..1, `cuts` referencing existing clips
+- [x] tests: a save/load round trip loses nothing; validation catches out-of-range
       coordinates and broken references
-- [ ] run the tests — they must pass before task 16
+- [x] run the tests — they must pass before task 16
 
 ### Task 16: Exporting the overlay through WebCodecs
 

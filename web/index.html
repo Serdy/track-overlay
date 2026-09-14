@@ -43,6 +43,16 @@
     <button id="segment" title="Swap for a stretch: click to mark the start, again to end it (D)">⇄ …</button>
     <button id="reset" title="Discard every camera switch and return to the default layout">↺</button>
     <button id="export" title="Compose everything into one video">⬇ Export</button>
+    <select id="resolution" title="Output resolution">
+      <option value="1280x720">720p</option>
+      <option value="1920x1080" selected>1080p</option>
+      <option value="2560x1440">1440p</option>
+      <option value="3840x2160">2160p</option>
+    </select>
+    <label class="nudge" title="Shift the telemetry against the video, in seconds">
+      sync <input id="nudge" type="range" min="-3" max="3" step="0.02" value="0">
+      <code id="nudge-value">0.00</code>
+    </label>
     <select id="export-range" title="How much to render">
       <option value="10">10 s</option>
       <option value="60">1 min</option>
@@ -63,6 +73,7 @@
   <script src="js/session.js"></script>
   <script src="js/clock.js"></script>
   <script src="js/cuts.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/scoring.js"></script>
   <script src="js/display.js"></script>
   <script src="js/webm-muxer.min.js"></script>

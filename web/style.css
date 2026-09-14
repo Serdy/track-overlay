@@ -206,3 +206,21 @@ code { font-variant-numeric: tabular-nums; }
   color: var(--text);
   font: inherit;
 }
+
+.nudge {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.nudge input { width: 110px; }
+
+/* The overlay canvas takes pointer events only while the layout is being edited. */
+#overlay.editing {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+#overlay.dragging { cursor: grabbing; }
