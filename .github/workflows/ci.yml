@@ -1,0 +1,80 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The parsers shell out to ffprobe, and the render tests build command lines that
+      # ffmpeg has to accept.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --python ${{ matrix.python }}
+
+      - name: Tests
+        run: uv run pytest -q
+
+  javascript:
+    name: javascript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # A glob, not a directory: node 22+ tries to load `web/test/` as a module.
+      - name: Tests
+        run: node --test web/test/*.test.js
+
+  smoke:
+    name: end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync
+
+      # The source video is far too large for a repository, but the RaceBox exports are
+      # small enough to keep — so the whole pipeline up to the video composition runs
+      # here on real data from a real track day.
+      - name: Build a session from the committed telemetry
+        run: |
+          uv run trackoverlay build data/*.csv data/*.vbo \
+            --track "Slovakia Ring" -o out/session.json
+          python3 - <<'PY'
+          import json
+          session = json.load(open("out/session.json"))
+          laps = session["laps"]
+          best = min(lap["duration_s"] for lap in laps)
+          assert len(laps) == 8, f"expected 8 laps, got {len(laps)}"
+          assert abs(best - 160.349) < 0.05, f"best lap drifted to {best}"
+          print(f"{len(laps)} laps, best {best:.3f}s")
+          PY
