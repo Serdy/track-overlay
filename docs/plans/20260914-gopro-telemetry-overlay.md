@@ -482,10 +482,10 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `web/test/slots.test.js`
 - Modify: `web/index.html`
 
-- [ ] one `<video>` tag per slot, positioned absolutely from the `rect` in `layout.json`
-- [ ] playback through the `.LRV` proxies; full resolution is never used in the preview
-- [ ] every clip loaded but only the visible ones playing, all driven by the master clock
-- [ ] account for each clip's individual `offset_s` when setting `currentTime`
+- [x] one `<video>` tag per slot, positioned absolutely from the `rect` in `layout.json`
+- [x] playback through the `.LRV` proxies; full resolution is never used in the preview
+- [x] every clip loaded but only the visible ones playing, all driven by the master clock
+- [x] account for each clip's individual `offset_s` when setting `currentTime`
 - [ ] drag and resize the PiP with the mouse, storing the result in normalised coordinates
 - [ ] tests: converting normalised coordinates to pixels and back at different container
       sizes; setting time with a clip offset applied
@@ -499,15 +499,15 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `web/test/cuts.test.js`
 - Modify: `web/index.html`
 
-- [ ] model `cuts` as a sparse list: only the moments where the arrangement changes
-- [ ] `resolveAt(t)` — which camera is in which slot at a given moment
-- [ ] a timeline strip with switch markers, adding one at the playhead by a hotkey,
+- [x] model `cuts` as a sparse list: only the moments where the arrangement changes
+- [x] `resolveAt(t)` — which camera is in which slot at a given moment
+- [x] a timeline strip with switch markers, adding one at the playhead by a hotkey,
       dragging and deleting markers
-- [ ] a one-button "swap main and inset" action
-- [ ] tests: `resolveAt` before the first switch, exactly on a boundary, after the last;
+- [x] a one-button "swap main and inset" action
+- [x] tests: `resolveAt` before the first switch, exactly on a boundary, after the last;
       inserting a switch in the middle leaves its neighbours intact
-- [ ] failure tests: two switches at the same timestamp, a reference to a missing clip
-- [ ] run the tests — they must pass before task 15
+- [x] failure tests: two switches at the same timestamp, a reference to a missing clip
+- [x] run the tests — they must pass before task 15
 
 ### Task 15: Widget layout and saving layout.json
 
@@ -519,7 +519,7 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - [ ] drag widgets with the mouse and change their scale
 - [ ] a manual sync-adjustment slider on top of the automatic result
 - [ ] choose the output resolution, defaulting to the main camera's
-- [ ] save and load `layout.json` through `POST /api/layout`
+- [x] save and load `layout.json` through `POST /api/layout`
 - [ ] validation: coordinates within 0..1, `cuts` referencing existing clips
 - [ ] tests: a save/load round trip loses nothing; validation catches out-of-range
       coordinates and broken references

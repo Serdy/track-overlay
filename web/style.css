@@ -46,7 +46,13 @@ body {
   height: 100%;
 }
 
-#overlay { pointer-events: none; }
+/* The overlay must stay above the video tags. They carry a z-index of their own to order
+   the inset over the main view, and #slots does not create a stacking context, so without
+   an explicit value here the videos would paint over the widgets. */
+#overlay {
+  pointer-events: none;
+  z-index: 10;
+}
 
 #slots video {
   position: absolute;
@@ -130,3 +136,33 @@ body {
 }
 
 code { font-variant-numeric: tabular-nums; }
+
+.cuts { position: absolute; inset: 0; pointer-events: none; }
+
+.cuts i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  margin-left: -1px;
+  background: #4da3ff;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.cuts i:hover { background: #fff; }
+
+/* The stretch selected but not yet applied. */
+.pending {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(77, 163, 255, 0.25);
+  border-left: 2px solid #4da3ff;
+  pointer-events: none;
+}
+
+.transport button.armed {
+  border-color: #4da3ff;
+  color: #4da3ff;
+}

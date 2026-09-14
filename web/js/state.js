@@ -12,6 +12,7 @@
   let videos = [];
   let scores = null;
   let layout = null;
+  let segmentStart = null;      // set while a stretch is being marked out
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -21,6 +22,10 @@
       { type: 'lean',  pos: [0.030, 0.725], scale: 1 },
       { type: 'accel', pos: [0.820, 0.845], scale: 1 },
       { type: 'map',   pos: [0.820, 0.500], scale: 1 },
+    ],
+    slots: [
+      { id: 'main', rect: [0, 0, 1, 1] },
+      { id: 'pip', rect: [0.70, 0.04, 0.28, 0.28] },
     ],
   };
 
@@ -33,7 +38,8 @@
   function bind() {
     for (const id of ['track-name', 'session-info', 'sync-info', 'slots', 'overlay',
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
-                      'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label']) {
+                      'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
+                      'swap', 'segment', 'cut-marks', 'pending-range']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -50,12 +56,13 @@
     // The acceleration score is computed once for the whole session: it is a pass over
     // forty thousand samples, not something to redo on every frame.
     scores = Scoring.scoreSession(session);
-    layout = DEFAULT_LAYOUT;
+    layout = await loadLayout();
 
     describe();
     buildReadout();
     buildLapMarks();
     buildSlots();
+    renderCutMarks();
     wire();
 
     Clock.onChange(clock, render);
@@ -63,6 +70,29 @@
     resizeOverlay();
     render(0);
     requestAnimationFrame(tick);
+  }
+
+  /**
+   * The saved layout if there is one, the default otherwise.
+   *
+   * Entries referring to clips the session no longer holds are dropped: a layout saved
+   * against a different set of cameras must not leave empty slots behind.
+   */
+  async function loadLayout() {
+    const known = new Set(session.clips.map((clip) => clip.id));
+    const fallback = Object.assign({}, DEFAULT_LAYOUT,
+                                   { cuts: Cuts.initial([...known]) });
+    try {
+      const response = await fetch('/api/layout');
+      if (!response.ok) return fallback;
+      const saved = await response.json();
+      const cuts = (saved.cuts || []).filter(
+        (cut) => known.has(cut.main) && (cut.pip === null || known.has(cut.pip)));
+      if (!cuts.length) return fallback;
+      return Object.assign({}, fallback, saved, { cuts: Cuts.simplify(cuts) });
+    } catch (error) {
+      return fallback;
+    }
   }
 
   function describe() {
@@ -99,20 +129,114 @@
     }
   }
 
-  /** One <video> tag per clip. The preview plays the proxy when one exists. */
+  /**
+   * One <video> tag per clip. Which slot a tag occupies is decided by the arrangement in
+   * force, not by the order the clips arrived in — that is the whole point of cuts.
+   */
   function buildSlots() {
     dom.slots.innerHTML = '';
-    videos = session.clips.map((clip, index) => {
+    videos = session.clips.map((clip) => {
       const element = document.createElement('video');
       element.preload = 'auto';
       element.muted = true;
       element.playsInline = true;
-      Object.assign(element.style,
-        index === 0 ? { inset: '0', width: '100%', height: '100%' }
-                    : { right: '2%', top: '4%', width: '26%', height: '26%' });
       dom.slots.appendChild(element);
-      return { clip, element, chunk: -1 };
+      return { clip, element, chunk: -1, slot: null };
     });
+  }
+
+  function slotRect(slotId) {
+    const slot = (layout.slots || []).find((s) => s.id === slotId);
+    return slot ? slot.rect : [0, 0, 1, 1];
+  }
+
+  /** Places a tag into a slot, or hides it when it is in none. */
+  function placeInSlot(entry, slotId) {
+    if (entry.slot === slotId) return;
+    entry.slot = slotId;
+    if (!slotId) {
+      entry.element.style.display = 'none';
+      return;
+    }
+    const [x, y, w, h] = slotRect(slotId);
+    Object.assign(entry.element.style, {
+      display: 'block',
+      left: `${x * 100}%`,
+      top: `${y * 100}%`,
+      width: `${w * 100}%`,
+      height: `${h * 100}%`,
+      zIndex: slotId === 'main' ? '1' : '2',
+      borderRadius: slotId === 'main' ? '0' : '6px',
+      boxShadow: slotId === 'main' ? 'none' : '0 2px 14px rgba(0,0,0,0.55)',
+    });
+  }
+
+  function renderCutMarks() {
+    dom['cut-marks'].innerHTML = '';
+    for (const cut of layout.cuts) {
+      if (cut.t <= 0) continue;                  // the opening entry is not a change
+      const mark = document.createElement('i');
+      mark.style.left = `${(cut.t / session.duration) * 100}%`;
+      mark.title = `${Clock.formatTime(cut.t)} — click to remove`;
+      mark.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();                 // do not scrub while deleting
+        layout.cuts = Cuts.removeNear(layout.cuts, cut.t, 0.01);
+        renderCutMarks();
+        saveLayout();
+        render(clock.time);
+      });
+      dom['cut-marks'].appendChild(mark);
+    }
+  }
+
+  function swapFromPlayhead() {
+    layout.cuts = Cuts.swapAt(layout.cuts, clock.time);
+    renderCutMarks();
+    saveLayout();
+    render(clock.time);
+  }
+
+  /** Two clicks: the first marks the start of a stretch, the second closes it. */
+  function toggleSegment() {
+    if (segmentStart === null) {
+      segmentStart = clock.time;
+      dom.segment.classList.add('armed');
+      return updatePending();
+    }
+    const [from, to] = [segmentStart, clock.time].sort((a, b) => a - b);
+    segmentStart = null;
+    dom.segment.classList.remove('armed');
+    updatePending();
+    if (to - from < 0.2) return;                 // too short to mean anything
+    layout.cuts = Cuts.swapRange(layout.cuts, from, to);
+    renderCutMarks();
+    saveLayout();
+    render(clock.time);
+  }
+
+  function updatePending() {
+    const strip = dom['pending-range'];
+    if (segmentStart === null) {
+      strip.hidden = true;
+      return;
+    }
+    const [from, to] = [segmentStart, clock.time].sort((a, b) => a - b);
+    strip.hidden = false;
+    strip.style.left = `${(from / session.duration) * 100}%`;
+    strip.style.width = `${((to - from) / session.duration) * 100}%`;
+  }
+
+  let saveTimer = null;
+
+  function saveLayout() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      fetch('/api/layout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(layout),
+      }).catch(() => {});
+    }, 400);
   }
 
   function wire() {
@@ -120,6 +244,8 @@
     dom['prev-lap'].addEventListener('click', () => Clock.jumpLap(clock, session.laps, -1));
     dom['next-lap'].addEventListener('click', () => Clock.jumpLap(clock, session.laps, +1));
     dom.rate.addEventListener('click', () => Clock.cycleRate(clock, +1));
+    dom.swap.addEventListener('click', swapFromPlayhead);
+    dom.segment.addEventListener('click', toggleSegment);
 
     dom.timeline.addEventListener('pointerdown', (event) => {
       const scrub = (e) => {
@@ -144,6 +270,8 @@
         ArrowLeft: () => Clock.step(clock, event.shiftKey ? -10 : -1),
         ArrowUp: () => Clock.jumpLap(clock, session.laps, -1),
         ArrowDown: () => Clock.jumpLap(clock, session.laps, +1),
+        s: swapFromPlayhead,
+        d: toggleSegment,
       };
       const action = actions[event.key];
       if (action) {
@@ -238,6 +366,7 @@
         ? '—' : value.toFixed(item.digits) + (item.suffix || '');
     }
 
+    updatePending();
     drawOverlay(time);
     syncVideos(time);
   }
@@ -248,8 +377,16 @@
    * assigning currentTime on every frame makes the picture stutter.
    */
   function syncVideos(time) {
+    const arrangement = Cuts.resolveAt(layout.cuts, time) || {};
     for (const slot of videos) {
       const { clip, element } = slot;
+      const inSlot = arrangement.main === clip.id ? 'main'
+                   : (arrangement.pip === clip.id ? 'pip' : null);
+      placeInSlot(slot, inSlot);
+      if (!inSlot) {
+        if (!element.paused) element.pause();
+        continue;
+      }
       const position = SessionModel.chunkAt(clip, time);
       if (position === null) {
         element.style.visibility = 'hidden';
