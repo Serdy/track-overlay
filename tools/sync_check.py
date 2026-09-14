@@ -67,8 +67,14 @@ def main() -> None:
             except sync.SyncError:
                 pass
         if lags:
-            print(f"    across {len(lags)} windows: spread {max(lags)-min(lags):.2f}s "
-                  f"(no drift if under 0.1s)")
+            median = float(np.median(lags))
+            worst = max(abs(lag - median) for lag in lags)
+            # A single stretch of bad GPS speed shows up as one outlier, which is why the
+            # offset is taken as a median. Real clock drift would instead tilt the whole
+            # sequence, so spread around the median is what matters here.
+            inliers = [lag for lag in lags if abs(lag - median) <= 0.1]
+            print(f"    across {len(lags)} windows: median {median:+.2f}s, "
+                  f"{len(inliers)} within 0.1s, worst deviation {worst:.2f}s")
 
 
 if __name__ == "__main__":

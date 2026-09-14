@@ -163,3 +163,72 @@ def test_real_session_3429():
     assert -1.45 < result.correction_s < -1.25
     assert result.offset_s == pytest.approx(-116.1, abs=0.5)
     assert result.overlap_s == pytest.approx(26.9 * 60, abs=30)
+
+
+def test_robust_offset_ignores_a_bad_stretch(grid):
+    """One bad window must not drag the whole estimate.
+
+    Real case: on session 3429 the second camera reads +2.51 s over the first window,
+    where the bike pulls away on a freshly acquired fix, against a steady +1.40 s after.
+    A single global correlation came out at +1.48 s — five frames at 60 fps off.
+    """
+    tel_t = [1000.0 + t for t in grid]
+    tel_v = SPEED(np.array(tel_t) - 1000.0)
+
+    # The video lags by a steady 1.4 s, except for the first eighth where the speed is
+    # shifted much further, standing in for an unsettled GPS fix.
+    video_t = np.array(tel_t)
+    video_v = SPEED(video_t - 1000.0 - 1.4)
+    spoiled = slice(0, len(video_t) // 8)
+    video_v[spoiled] = SPEED(video_t[spoiled] - 1000.0 - 4.0)
+
+    naive, _, _ = sync.cross_correlate(video_t.tolist(), video_v.tolist(), tel_t, tel_v.tolist())
+    robust, _, _ = sync.robust_offset(video_t.tolist(), video_v.tolist(), tel_t, tel_v.tolist())
+
+    assert robust == pytest.approx(1.4, abs=0.05)
+    assert abs(robust - 1.4) < abs(naive - 1.4)     # the median is closer to the truth
+
+
+def test_robust_offset_matches_plain_correlation_on_clean_data(grid):
+    tel_t = [1000.0 + t for t in grid]
+    tel_v = SPEED(np.array(tel_t) - 1000.0).tolist()
+    video_v = SPEED(np.array(tel_t) - 1000.0 - 1.4).tolist()
+
+    plain, _, _ = sync.cross_correlate(tel_t, video_v, tel_t, tel_v)
+    robust, _, _ = sync.robust_offset(tel_t, video_v, tel_t, tel_v)
+    assert robust == pytest.approx(plain, abs=0.05)
+
+
+def test_robust_offset_falls_back_on_short_overlap():
+    """Too short to split into windows — fall back to one global correlation."""
+    short = np.arange(0.0, 100.0, 0.04).tolist()
+    values = SPEED(np.array(short)).tolist()
+    delayed = SPEED(np.array(short) - 1.0).tolist()
+    offset, score, overlap = sync.robust_offset(short, delayed, short, values)
+    assert offset == pytest.approx(1.0, abs=0.05)
+    assert overlap == pytest.approx(100.0, abs=1.0)
+
+
+def test_both_cameras_of_session_3429_agree():
+    """Two cameras started a second apart must land a second apart on the session axis."""
+    from trackoverlay.ingest import gpmf, racebox
+
+    csv = DATA / "RaceBox Track Session on 12-09-2026 14-31_lean.csv"
+    first, second = DATA / "GH013429.MP4", DATA / "GH013446.MP4"
+    if not (csv.exists() and first.exists() and second.exists()):
+        pytest.skip("the second camera footage is not available")
+
+    rb = racebox.read_csv(csv)
+    offsets = []
+    for path in (first, second):
+        samples = gpmf.read_gps(path)
+        result = sync.align([s.t_utc for s in samples], [s.speed_kmh for s in samples],
+                            rb.times, rb.columns["speed_kmh"],
+                            session_start_utc=rb.times[0])
+        assert result.method == "xcorr"
+        assert result.correlation > 0.99
+        offsets.append(result.offset_s)
+
+    # GPSU puts the starts one second apart, so the session offsets must differ by about
+    # the same — this is the check that both cameras land on one timeline.
+    assert abs(abs(offsets[0] - offsets[1]) - 1.0) < 0.3

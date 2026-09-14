@@ -26,6 +26,8 @@ GRID_HZ = 10.0          # rate of the shared grid used for correlation
 MAX_LAG_S = 60.0        # searching wider is pointless: UTC is not minutes out
 MIN_OVERLAP_S = 60.0    # on a short overlap the correlation means nothing
 MIN_MOTION_KMH = 5.0    # a series of standing still has nothing to correlate against
+ROBUST_WINDOWS = 8      # how many windows the overlap is split into for the robust estimate
+MIN_WINDOW_S = 45.0     # shorter windows produce a noisy peak
 
 Method = Literal["utc", "xcorr", "manual"]
 
@@ -115,6 +117,49 @@ def cross_correlate(a_times: Sequence[float], a_values: Sequence[float],
     return float(shift), float(scores[peak]), float(overlap)
 
 
+def robust_offset(a_times: Sequence[float], a_values: Sequence[float],
+                  b_times: Sequence[float], b_values: Sequence[float],
+                  *, windows: int = ROBUST_WINDOWS) -> tuple[float, float, float]:
+    """Cross-correlation resistant to a bad stretch at either end.
+
+    One global correlation weights every sample alike, so a stretch where the GPS speed
+    is unreliable drags the whole estimate. That is not hypothetical: on session 3429 the
+    second camera reads +2.51 s over the first window, where the bike pulls away from a
+    standstill on a freshly acquired fix, against a steady +1.40 s everywhere after. The
+    global figure came out at +1.48 s — five frames at 60 fps off the truth.
+
+    Splitting the overlap into windows and taking the median of their offsets keeps a bad
+    stretch from mattering, because the median ignores outliers by construction.
+    """
+    shift, score, overlap = cross_correlate(a_times, a_values, b_times, b_values)
+    if overlap < MIN_WINDOW_S * 3:
+        return shift, score, overlap        # too short to split meaningfully
+
+    count = max(3, min(windows, int(overlap // MIN_WINDOW_S)))
+    a_t = np.asarray(a_times, float)
+    a_v = np.asarray(a_values, float)
+    lo = max(a_t[0], b_times[0])
+    hi = min(a_t[-1], b_times[-1])
+    edges = np.linspace(lo, hi, count + 1)
+
+    lags: list[float] = []
+    for begin, end in zip(edges, edges[1:]):
+        mask = (a_t >= begin) & (a_t <= end)
+        if mask.sum() < 2:
+            continue
+        try:
+            window_shift, _, _ = cross_correlate(
+                a_t[mask].tolist(), a_v[mask].tolist(), b_times, b_values,
+                max_lag_s=max(5.0, abs(shift) * 2 + 2.0))
+        except SyncError:
+            continue
+        lags.append(window_shift)
+
+    if len(lags) < 3:
+        return shift, score, overlap
+    return float(np.median(lags)), score, overlap
+
+
 def align(video_times: Sequence[float], video_speeds: Sequence[float],
           tel_times: Sequence[float], tel_speeds: Sequence[float],
           *, session_start_utc: float, manual_s: float = 0.0) -> SyncResult:
@@ -133,7 +178,7 @@ def align(video_times: Sequence[float], video_speeds: Sequence[float],
         return SyncResult(naive + manual_s, 0.0, 0.0, "manual", 0.0)
 
     try:
-        shift, score, overlap = cross_correlate(
+        shift, score, overlap = robust_offset(
             video_times, video_speeds, tel_times, tel_speeds)
     except SyncError:
         return SyncResult(naive + manual_s, 0.0, 0.0, "utc", 0.0)
