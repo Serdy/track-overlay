@@ -10,6 +10,18 @@
   let session = null;
   let clock = null;
   let videos = [];
+  let scores = null;
+  let layout = null;
+
+  // Раскладка по умолчанию. Позиции в долях кадра — это и есть то, что позволяет
+  // превью и рендеру совпасть при разных разрешениях.
+  const DEFAULT_LAYOUT = {
+    widgets: [
+      { type: 'speed', pos: [0.030, 0.845], scale: 1 },
+      { type: 'lean',  pos: [0.030, 0.725], scale: 1 },
+      { type: 'accel', pos: [0.820, 0.845], scale: 1 },
+    ],
+  };
 
   const READOUT = [
     { channel: 'speed', label: 'км/ч', digits: 0 },
@@ -34,6 +46,10 @@
     }
     session = SessionModel.load(await response.json());
     clock = Clock.create(session.duration, 60);
+    // Оценка разгона и торможения считается один раз на всю сессию: это проход по
+    // сорока тысячам сэмплов, на каждом кадре такое делать нельзя.
+    scores = Scoring.scoreSession(session);
+    layout = DEFAULT_LAYOUT;
 
     describe();
     buildReadout();
@@ -42,6 +58,8 @@
     wire();
 
     Clock.onChange(clock, render);
+    window.addEventListener('resize', resizeOverlay);
+    resizeOverlay();
     render(0);
     requestAnimationFrame(tick);
   }
@@ -134,6 +152,31 @@
     });
   }
 
+  /** Холст оверлея держится в физических пикселях экрана, иначе всё размывается. */
+  function resizeOverlay() {
+    const canvas = dom.overlay;
+    const box = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(box.width * dpr));
+    canvas.height = Math.max(1, Math.round(box.height * dpr));
+    if (clock) render(clock.time);
+  }
+
+  function drawOverlay(time) {
+    const canvas = dom.overlay;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!layout) return;
+
+    const score = Scoring.scoreAt(scores, session, time);
+    const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel'], time);
+    data.score = score;
+    data.scoreColor = SR_TRACK.scoreToColor(score, SR_TRACK.DEFAULT_CFG);
+
+    Widgets.drawAll(ctx, layout.widgets,
+                    { width: canvas.width, height: canvas.height }, data);
+  }
+
   let lastFrame = 0;
 
   function tick(now) {
@@ -161,6 +204,7 @@
         ? '—' : value.toFixed(item.digits) + (item.suffix || '');
     }
 
+    drawOverlay(time);
     syncVideos(time);
   }
 
