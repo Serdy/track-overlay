@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+out/
+.DS_Store
+
+# Исходное видео — гигабайты, в репозиторий не идёт.
+# CSV и VBO остаются: они мелкие и работают как фикстуры.
+data/*.MP4
+data/*.LRV
+data/*.THM
