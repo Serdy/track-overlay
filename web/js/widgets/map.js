@@ -1,19 +1,19 @@
 /**
- * Карта трассы: огибающая кругов, линия текущего круга и точка позиции.
+ * Track map: the envelope of all laps, the recent trail and the position dot.
  *
- * Контур нигде не качается — он рисуется из собственного GPS-трека сессии. Своя
- * траектория точнее любой сторонней картинки, потому что это буквально то место, где
- * ты ехал. Ни тайлов, ни Leaflet, ни сетевых запросов: рендер обязан работать офлайн,
- * иначе батч-экспорт зависит от интернета.
+ * Nothing is downloaded — the outline is drawn from the session's own GPS trace. Your
+ * own trajectory beats any third-party picture, because it is literally where you
+ * rode. No tiles, no Leaflet, no network calls: rendering has to work offline, or
+ * batch export ends up depending on the internet.
  *
- * Огибающая статична на всю сессию, поэтому рисуется один раз в отдельный холст и
- * дальше переиспользуется. Перерисовывать её шестьдесят раз в секунду незачем.
+ * The envelope is static for the whole session, so it is projected once and reused.
+ * There is no reason to recompute it sixty times a second.
  */
 (function (register) {
-  const PAD = 0.08;              // поля внутри виджета, в долях меньшей стороны
-  const TRAIL_S = 6;             // сколько секунд следа тянется за точкой
+  const PAD = 0.08;              // padding inside the widget, as a fraction of its shorter side
+  const TRAIL_S = 6;             // how many seconds of trail follow the dot
 
-  /** Границы всех переданных линий в координатах lat/lon. */
+  /** Bounding box of the given lat/lon lines. */
   function bounds(lines) {
     let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
     for (const line of lines) {
@@ -28,10 +28,11 @@
   }
 
   /**
-   * Проекция lat/lon в пиксели виджета с сохранением пропорций.
+   * Projects lat/lon into widget pixels, preserving the aspect ratio.
    *
-   * Долготу приходится сжимать на косинус широты: градус долготы на 48° короче
-   * градуса широты примерно втрое. Без поправки трасса выйдет растянутой поперёк.
+   * Longitude has to be squeezed by the cosine of the latitude: at 48° a degree of
+   * longitude is about a third shorter than a degree of latitude. Without that
+   * correction the circuit comes out stretched sideways.
    */
   function makeProjection(box, box_bounds) {
     const b = box_bounds;
@@ -50,7 +51,7 @@
 
     return (lat, lon) => [
       offsetX + (lon - b.minLon) * kx * scale,
-      // Ось экрана растёт вниз, широта — вверх, поэтому отражаем.
+      // Screen coordinates grow downwards, latitude grows upwards — so flip.
       offsetY + (b.maxLat - lat) * scale,
     ];
   }
@@ -69,10 +70,10 @@
 
   register({
     id: 'map',
-    title: 'Карта',
+    title: 'Track map',
     defaultSize: [0.17, 0.30],
 
-    /** Границы и проекция считаются один раз на сессию, а не на каждом кадре. */
+    /** Bounds and projection are computed once per session, not per frame. */
     prepare(session, box) {
       const envelope = session.envelope || { left: [], right: [] };
       const lines = [envelope.left, envelope.right].filter((line) => line.length);
@@ -94,7 +95,7 @@
 
       W.plate(ctx, box);
 
-      // Полоса, которую занимают все круги сессии: край-туда, край-обратно.
+      // The band the session's laps actually occupy: one edge out, the other back.
       if (prepared.left.length && prepared.right.length) {
         ctx.fillStyle = 'rgba(255,255,255,0.16)';
         ctx.beginPath();

@@ -1,14 +1,15 @@
 /**
- * widgets/index.js — общий контракт виджетов и их реестр.
+ * widgets/index.js — the widget contract and registry.
  *
- * Виджет получает прямоугольник **в пикселях** и рисует внутри него, отмеряя все
- * размеры от его высоты. Благодаря этому один и тот же код даёт одинаковую картинку
- * и в превью на четверть экрана, и в рендере 4K: в layout.json позиция и размер
- * хранятся в долях кадра, а перевод в пиксели делается один раз снаружи.
+ * A widget is handed a rectangle **in pixels** and draws inside it, deriving every
+ * dimension from that rectangle's height. That is what lets one piece of code produce
+ * the same picture in a quarter-screen preview and in a 4K render: layout.json stores
+ * position and size as fractions of the frame, and the conversion to pixels happens
+ * once, outside.
  *
- * Виджет не знает ни про DOM, ни про время, ни про то, откуда взялись значения, —
- * ему передают готовый срез телеметрии. Поэтому его можно вызвать и из превью, и из
- * экспортёра кадров, и из теста с поддельным контекстом.
+ * A widget knows nothing about the DOM, about time, or about where the values came
+ * from — it receives a ready slice of telemetry. So the same call works from the
+ * preview, from the frame exporter, and from a test with a fake context.
  */
 const Widgets = (function () {
 
@@ -27,7 +28,7 @@ const Widgets = (function () {
     return Object.keys(registry);
   }
 
-  /** Прямоугольник виджета в пикселях из долей кадра. */
+  /** Widget rectangle in pixels, from fractions of the frame. */
   function boxFor(widget, placement, frame) {
     const size = widget.defaultSize;
     const scale = placement.scale === undefined ? 1 : placement.scale;
@@ -49,7 +50,7 @@ const Widgets = (function () {
     }
   }
 
-  // --- общие примитивы оформления --------------------------------------------
+  // --- shared styling primitives ---------------------------------------------
 
   const INK = '#ffffff';
   const DIM = 'rgba(255,255,255,0.55)';

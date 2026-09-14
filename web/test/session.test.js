@@ -18,108 +18,108 @@ function payload(overrides = {}) {
   }, overrides);
 }
 
-test('загрузка приводит каналы к типизированным массивам', () => {
+test('loading converts channels to typed arrays', () => {
   const session = SessionModel.load(payload());
   assert.ok(session.channels.speed.samples instanceof Float64Array);
   assert.strictEqual(session.rate, 2);
   assert.strictEqual(session.track, 'Slovakia Ring');
 });
 
-test('выборка попадает точно в узлы сетки', () => {
+test('sampling hits grid nodes exactly', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 0), 0);
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 1), 200);
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 2), 400);
 });
 
-test('между узлами значение интерполируется', () => {
+test('values interpolate between nodes', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 0.25), 50);
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 0.75), 150);
 });
 
-test('запрос за границами зажимается, а не уходит в undefined', () => {
+test('out-of-range queries clamp instead of returning undefined', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', -100), 0);
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 1e6), 400);
 });
 
-test('неизвестный канал даёт null, а не падение', () => {
+test('an unknown channel yields null, not a crash', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.sampleAt(session, 'rpm', 1), null);
 });
 
-test('пустой канал даёт null', () => {
+test('an empty channel yields null', () => {
   const session = SessionModel.load(payload({
     channels: { speed: { role: 'speed', unit: 'km/h', samples: [] } },
   }));
   assert.strictEqual(SessionModel.sampleAt(session, 'speed', 0), null);
 });
 
-test('sampleMany отдаёт несколько каналов разом', () => {
+test('sampleMany returns several channels at once', () => {
   const session = SessionModel.load(payload());
   assert.deepStrictEqual(SessionModel.sampleMany(session, ['speed', 'lean'], 1),
                          { speed: 200, lean: 0 });
 });
 
-test('круг определяется по моменту времени', () => {
+test('the lap is resolved from a point in time', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.lapAt(session, 1.0).n, 1);
-  assert.strictEqual(SessionModel.lapAt(session, 2.0).n, 2);   // граница принадлежит следующему
-  assert.strictEqual(SessionModel.lapAt(session, 0.1), null);  // выездной участок
+  assert.strictEqual(SessionModel.lapAt(session, 2.0).n, 2);   // the boundary belongs to the next lap
+  assert.strictEqual(SessionModel.lapAt(session, 0.1), null);  // out lap
   assert.strictEqual(SessionModel.lapAt(session, 9), null);
 });
 
-test('время круга отсчитывается от его начала', () => {
+test('lap time is counted from the lap start', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.lapTime(session, 1.25), 0.75);
   assert.strictEqual(SessionModel.lapTime(session, 0.1), null);
 });
 
-test('лучший круг помечен ровно один', () => {
+test('exactly one lap is marked as best', () => {
   const session = SessionModel.load(payload());
   assert.strictEqual(SessionModel.bestLap(session).n, 2);
 });
 
-test('время внутри клипа учитывает его смещение', () => {
+test('time inside a clip accounts for its offset', () => {
   const session = SessionModel.load(payload());
   const clip = SessionModel.clipById(session, 'cam_1');
-  assert.strictEqual(SessionModel.clipTime(clip, 0), 1.0);     // клип начался раньше сессии
+  assert.strictEqual(SessionModel.clipTime(clip, 0), 1.0);     // the clip started before the session
   assert.strictEqual(SessionModel.clipTime(clip, 3), 4.0);
 });
 
-test('вне длительности клипа время не определено', () => {
+test('outside the clip duration the time is undefined', () => {
   const session = SessionModel.load(payload());
   const clip = SessionModel.clipById(session, 'cam_1');
-  assert.strictEqual(SessionModel.clipTime(clip, -2), null);   // до начала
-  assert.strictEqual(SessionModel.clipTime(clip, 100), null);  // после конца
+  assert.strictEqual(SessionModel.clipTime(clip, -2), null);   // before the start
+  assert.strictEqual(SessionModel.clipTime(clip, 100), null);  // after the end
 });
 
-test('чанк выбирается по времени внутри клипа', () => {
+test('the chunk is chosen by time inside the clip', () => {
   const clip = { offset_s: 0, duration_s: 300, chunks: [100, 100, 100] };
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 50), { index: 0, time: 50 });
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 150), { index: 1, time: 50 });
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 250), { index: 2, time: 50 });
 });
 
-test('граница чанков принадлежит следующему файлу', () => {
+test('a chunk boundary belongs to the next file', () => {
   const clip = { offset_s: 0, duration_s: 300, chunks: [100, 100, 100] };
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 100), { index: 1, time: 0 });
 });
 
-test('смещение клипа учитывается при выборе чанка', () => {
+test('the clip offset is accounted for when picking a chunk', () => {
   const clip = { offset_s: -116, duration_s: 300, chunks: [100, 100, 100] };
   assert.deepStrictEqual(SessionModel.chunkAt(clip, -66), { index: 0, time: 50 });
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 84), { index: 2, time: 0 });
 });
 
-test('вне клипа чанка нет', () => {
+test('outside the clip there is no chunk', () => {
   const clip = { offset_s: 0, duration_s: 300, chunks: [100, 100, 100] };
   assert.strictEqual(SessionModel.chunkAt(clip, -1), null);
   assert.strictEqual(SessionModel.chunkAt(clip, 999), null);
 });
 
-test('клип без разбивки на чанки работает как один файл', () => {
+test('a clip without chunk splits behaves as a single file', () => {
   const clip = { offset_s: 0, duration_s: 300 };
   assert.deepStrictEqual(SessionModel.chunkAt(clip, 120), { index: 0, time: 120 });
 });

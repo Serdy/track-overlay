@@ -1,12 +1,12 @@
 /**
- * session.js — модель сессии и выборка каналов.
+ * session.js — the session model and channel sampling.
  *
- * Модуль намеренно не знает про DOM: он загружается и в браузере, и в node под тесты.
+ * Deliberately DOM-free: it loads both in the browser and in node under tests.
  *
- * Сетка телеметрии равномерная по построению (питон пересобирает её при сборке
- * session.json), поэтому момент сэмпла номер i — это ровно i / rate. Никакого поиска
- * по шкале времени не нужно, что важно: выборка идёт для каждого виджета на каждом
- * кадре, шестьдесят раз в секунду.
+ * The telemetry grid is uniform by construction (Python rebuilds it while assembling
+ * session.json), so sample number i sits at exactly i / rate. No searching along a
+ * time axis is needed, which matters: sampling runs for every widget on every frame,
+ * sixty times a second.
  */
 const SessionModel = (function () {
 
@@ -33,7 +33,7 @@ const SessionModel = (function () {
     };
   }
 
-  /** Номер сэмпла (дробный) для момента времени. */
+  /** Fractional sample index for a point in time. */
   function positionAt(session, t) {
     const last = channelLength(session) - 1;
     if (last < 0) return 0;
@@ -45,7 +45,7 @@ const SessionModel = (function () {
     return first ? first.samples.length : 0;
   }
 
-  /** Значение канала в произвольный момент, с линейной интерполяцией. */
+  /** Channel value at an arbitrary moment, linearly interpolated. */
   function sampleAt(session, name, t) {
     const channel = session.channels[name];
     if (!channel || channel.samples.length === 0) return null;
@@ -56,14 +56,14 @@ const SessionModel = (function () {
     return channel.samples[i] * (1 - frac) + channel.samples[next] * frac;
   }
 
-  /** Сразу несколько каналов одним вызовом — так дешевле на каждом кадре. */
+  /** Several channels in one call — cheaper when done every frame. */
   function sampleMany(session, names, t) {
     const out = {};
     for (const name of names) out[name] = sampleAt(session, name, t);
     return out;
   }
 
-  /** Круг, внутри которого лежит момент времени, или null для выездного участка. */
+  /** The lap containing this moment, or null for out/in laps. */
   function lapAt(session, t) {
     return session.laps.find((lap) => t >= lap.t_start && t < lap.t_end) || null;
   }
@@ -72,7 +72,7 @@ const SessionModel = (function () {
     return session.laps.find((lap) => lap.best) || null;
   }
 
-  /** Время от начала текущего круга — то, что показывает таймер. */
+  /** Time since the current lap started — what the lap timer shows. */
   function lapTime(session, t) {
     const lap = lapAt(session, t);
     return lap ? t - lap.t_start : null;
@@ -83,8 +83,8 @@ const SessionModel = (function () {
   }
 
   /**
-   * Время внутри клипа для момента сессии. null означает, что клип в этот момент
-   * ещё не начался или уже кончился.
+   * Time inside a clip for a session moment. null means the clip has not started yet
+   * or has already ended at that point.
    */
   function clipTime(clip, t) {
     const local = t - clip.offset_s;
@@ -92,11 +92,11 @@ const SessionModel = (function () {
   }
 
   /**
-   * Какой чанк клипа показывать и с какого места.
+   * Which chunk of a clip to show, and from where.
    *
-   * Длинную запись GoPro режет на файлы по 4 ГБ, и один тег <video> играет только
-   * один из них. Поэтому по ходу таймлайна источник приходится переключать, а время
-   * внутри файла отсчитывать от его начала, а не от начала записи.
+   * GoPro splits a long recording into 4 GB files, and one <video> tag plays only one
+   * of them. So the source has to be switched as the timeline advances, and the time
+   * inside a file is counted from that file's start, not the recording's.
    */
   function chunkAt(clip, t) {
     const local = clipTime(clip, t);

@@ -1,12 +1,13 @@
 /**
- * clock.js — единственный источник текущего времени.
+ * clock.js — the single source of the current time.
  *
- * Всё, что движется на экране — видео в каждом слоте, оверлей, бегунок, — берёт время
- * отсюда и только отсюда. Иначе слои разъезжаются: видео живёт своим `currentTime`,
- * а оверлей своим таймером, и на паузе или перемотке они расходятся.
+ * Everything that moves on screen — the video in each slot, the overlay, the playhead —
+ * takes its time from here and nowhere else. Otherwise the layers drift apart: the
+ * video runs on its own `currentTime` and the overlay on its own timer, and a pause or
+ * a seek pulls them out of step.
  *
- * Модуль без DOM: тики извне, подписчики снаружи. Привязка к requestAnimationFrame и
- * к тегам <video> живёт в state.js.
+ * DOM-free: ticks come from outside, listeners live outside. The wiring to
+ * requestAnimationFrame and to the <video> tags lives in state.js.
  */
 const Clock = (function () {
 
@@ -47,18 +48,18 @@ const Clock = (function () {
     return clock.time;
   }
 
-  /** Продвигает время на прошедшие реальные секунды с учётом скорости. */
+  /** Advances time by the elapsed wall-clock seconds, scaled by playback rate. */
   function advance(clock, elapsedS) {
     if (!clock.playing) return clock.time;
     const next = clamp(clock, clock.time + elapsedS * clock.rate);
     clock.time = next;
-    if (next >= clock.duration) clock.playing = false;   // доехали до конца
+    if (next >= clock.duration) clock.playing = false;   // reached the end
     notify(clock);
     return clock.time;
   }
 
   function play(clock) {
-    if (clock.time >= clock.duration) clock.time = 0;    // с конца — снова с начала
+    if (clock.time >= clock.duration) clock.time = 0;    // from the end, start over
     clock.playing = true;
     notify(clock);
   }
@@ -72,7 +73,7 @@ const Clock = (function () {
     (clock.playing ? pause : play)(clock);
   }
 
-  /** Шаг на несколько кадров; при шаге воспроизведение останавливается. */
+  /** Steps by a number of frames; stepping stops playback. */
   function step(clock, frames) {
     clock.playing = false;
     return seek(clock, clock.time + frames / clock.fps);
@@ -90,7 +91,7 @@ const Clock = (function () {
     return clock.rate;
   }
 
-  /** Прыжок к началу соседнего круга. */
+  /** Jumps to the start of an adjacent lap. */
   function jumpLap(clock, laps, direction) {
     const starts = laps.map((lap) => lap.t_start);
     if (!starts.length) return clock.time;
@@ -98,7 +99,7 @@ const Clock = (function () {
       const next = starts.find((t) => t > clock.time + 0.01);
       return seek(clock, next === undefined ? clock.duration : next);
     }
-    // Назад: сначала к началу текущего круга, повторно — к предыдущему.
+    // Backwards: first to the start of the current lap, then to the previous one.
     const previous = starts.filter((t) => t < clock.time - 0.5).pop();
     return seek(clock, previous === undefined ? 0 : previous);
   }

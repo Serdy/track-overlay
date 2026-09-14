@@ -1,41 +1,42 @@
 /**
- * scoring.js — обёртка над sr-track.js: единицы и частота.
+ * scoring.js — a wrapper over sr-track.js: units and sample rate.
  *
- * Сам sr-track перенесён из проекта serious-racing как есть, вместе с юнит-тестами, и
- * правиться не должен. Но писался он под данные того сайта, а там своя система мер:
+ * sr-track itself was carried over from the serious-racing project as-is, along with
+ * its unit tests, and should not be edited. But it was written against that site's
+ * data, which uses different conventions:
  *
- *   - скорость в милях в час, а не в км/ч;
- *   - продольное ускорение в м/с², а не в g;
- *   - и главное, частота 10 Гц, зашитая в `DT: 0.1`.
+ *   - speed in miles per hour, not km/h;
+ *   - longitudinal acceleration in m/s², not g;
+ *   - and above all a 10 Hz rate, baked into `DT: 0.1`.
  *
- * RaceBox даёт 25 Гц, то есть в 2.5 раза больше сэмплов на ту же секунду. Константы,
- * заданные в сэмплах, надо умножить на это отношение, а заданные в метрах — оставить
- * как есть. Отдельный случай — ограничители скорости изменения оценки: это величина
- * «на сэмпл», поэтому при росте частоты она наоборот делится.
+ * RaceBox delivers 25 Hz, that is 2.5 times more samples per second. Constants
+ * expressed in samples must be multiplied by that ratio; constants in metres stay put.
+ * The slew limiters are the special case: they are a per-sample step, so a higher rate
+ * divides them instead.
  */
 const Scoring = (function () {
 
-  // Зависимости разрешаются внутри замыкания: в браузере это глобали от соседних
-  // тегов <script>, в node — обычный require. Объявлять их снаружи нельзя — var
-  // всплывает даже из невыполненной ветки и конфликтует с уже объявленным const.
+  // Dependencies are resolved inside the closure: globals from sibling <script> tags
+  // in the browser, plain require in node. They must not be declared outside — var
+  // hoists even out of a branch that never runs and collides with the existing const.
   const SR = (typeof SR_TRACK !== 'undefined') ? SR_TRACK : require('./sr-track.js');
   const SM = (typeof SessionModel !== 'undefined') ? SessionModel : require('./session.js');
 
-  const BASE_RATE = 10;              // частота, под которую писался sr-track
+  const BASE_RATE = 10;              // the rate sr-track was written against
   const KMH_TO_MPH = 0.621371;
   const G_TO_MS2 = 9.80665;
 
-  // Константы в сэмплах: масштабируются пропорционально частоте.
+  // Constants in samples: scale proportionally with the rate.
   const IN_SAMPLES = [
     'diffSpan', 'MIN_RUN', 'ONSET_MIN_SAMPLES',
     'CORNER_LEAN_SMOOTH_WIN', 'CORNER_LEAN_MIN_SAMPLES', 'CORNER_GAP_MERGE',
     'CORNER_SPEED_SMOOTH_WIN', 'CORNER_SPEED_MIN_SEP',
   ];
 
-  // Ограничители «на сэмпл»: чем чаще сэмплы, тем меньше должен быть шаг.
+  // Per-sample limiters: the denser the samples, the smaller the step must be.
   const PER_SAMPLE = ['slewUp', 'slewDown', 'slew'];
 
-  /** Конфигурация sr-track, пересчитанная под частоту сессии. */
+  /** sr-track configuration rescaled to the session's sample rate. */
   function cfgForRate(rateHz) {
     const factor = rateHz / BASE_RATE;
     const override = { DT: 1 / rateHz };
@@ -51,10 +52,10 @@ const Scoring = (function () {
   }
 
   /**
-   * Оценка разгона и торможения для всей сессии, диапазон -1..+1.
+   * Acceleration/braking score for the whole session, in the range -1..+1.
    *
-   * Считается один раз при загрузке: это проход по всем сорока тысячам сэмплов, на
-   * каждом кадре такое делать нельзя.
+   * Computed once on load: it is a pass over all forty thousand samples, which is not
+   * something to do on every frame.
    */
   function scoreSession(session) {
     const speed = session.channels.speed;
@@ -77,7 +78,7 @@ const Scoring = (function () {
     return Float64Array.from(SR.computeScore(accelMs2, speedMph, leanDeg, valid, cfg));
   }
 
-  /** Оценка в произвольный момент, с интерполяцией между сэмплами. */
+  /** Score at an arbitrary moment, interpolated between samples. */
   function scoreAt(scores, session, t) {
     if (!scores || scores.length === 0) return 0;
     const pos = SM.positionAt(session, t);
@@ -86,7 +87,7 @@ const Scoring = (function () {
     return scores[i] * (1 - (pos - i)) + scores[next] * (pos - i);
   }
 
-  /** Цвет оценки: зелёный на разгоне, красный на торможении. */
+  /** Score colour: green under power, red under braking. */
   function colorFor(score, session) {
     return SR.scoreToColor(score, SR.DEFAULT_CFG
       ? Object.assign({}, SR.DEFAULT_CFG, cfgForRate(session.rate))

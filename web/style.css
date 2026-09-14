@@ -37,8 +37,8 @@ body {
   background: #000;
 }
 
-/* Слоты и оверлей лежат друг на друге: позиции внутри задаются в долях кадра,
-   поэтому при любом размере окна раскладка остаётся той же, что уйдёт в рендер. */
+/* Slots and the overlay sit on top of each other. Positions inside them are stored as
+   fractions of the frame, so at any window size the layout matches what goes to render. */
 #slots, #overlay {
   position: absolute;
   inset: 0;

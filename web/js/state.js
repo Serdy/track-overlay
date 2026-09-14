@@ -1,9 +1,9 @@
 /**
- * state.js — связывает чистые модули с DOM.
+ * state.js — wires the pure modules to the DOM.
  *
- * Вся логика времени живёт в clock.js, вся работа с данными — в session.js. Здесь
- * только провода: подписки, обработчики и обновление элементов. Поэтому модуль и не
- * покрыт юнит-тестами — покрывать в нём нечего.
+ * All time logic lives in clock.js, all data handling in session.js. What is left here
+ * is plumbing: subscriptions, event handlers and element updates. That is also why this
+ * module has no unit tests — there is nothing in it to test.
  */
 (function () {
   const dom = {};
@@ -13,8 +13,8 @@
   let scores = null;
   let layout = null;
 
-  // Раскладка по умолчанию. Позиции в долях кадра — это и есть то, что позволяет
-  // превью и рендеру совпасть при разных разрешениях.
+  // Default layout. Positions are fractions of the frame — that is exactly what lets
+  // the preview and the render agree across different output resolutions.
   const DEFAULT_LAYOUT = {
     widgets: [
       { type: 'speed', pos: [0.030, 0.845], scale: 1 },
@@ -25,8 +25,8 @@
   };
 
   const READOUT = [
-    { channel: 'speed', label: 'км/ч', digits: 0 },
-    { channel: 'lean', label: 'наклон', digits: 1, suffix: '°' },
+    { channel: 'speed', label: 'km/h', digits: 0 },
+    { channel: 'lean', label: 'lean', digits: 1, suffix: '°' },
     { channel: 'accel', label: 'G', digits: 2 },
   ];
 
@@ -42,13 +42,13 @@
     bind();
     const response = await fetch('/api/session');
     if (!response.ok) {
-      dom['track-name'].textContent = 'не удалось загрузить сессию';
+      dom['track-name'].textContent = 'failed to load the session';
       return;
     }
     session = SessionModel.load(await response.json());
     clock = Clock.create(session.duration, 60);
-    // Оценка разгона и торможения считается один раз на всю сессию: это проход по
-    // сорока тысячам сэмплов, на каждом кадре такое делать нельзя.
+    // The acceleration score is computed once for the whole session: it is a pass over
+    // forty thousand samples, not something to redo on every frame.
     scores = Scoring.scoreSession(session);
     layout = DEFAULT_LAYOUT;
 
@@ -66,16 +66,16 @@
   }
 
   function describe() {
-    dom['track-name'].textContent = session.track || 'Сессия';
+    dom['track-name'].textContent = session.track || 'Session';
     const best = SessionModel.bestLap(session);
     dom['session-info'].textContent =
-      `${session.laps.length} кругов` +
-      (best ? ` · лучший ${Clock.formatTime(best.duration_s)}` : '');
+      `${session.laps.length} laps` +
+      (best ? ` · best ${Clock.formatTime(best.duration_s)}` : '');
 
     const clip = session.clips[0];
     dom['sync-info'].textContent = clip
-      ? `сведение: ${clip.sync.method} (${clip.sync.correlation.toFixed(4)})`
-      : 'видео не подключено';
+      ? `sync: ${clip.sync.method} (${clip.sync.correlation.toFixed(4)})`
+      : 'no video attached';
     dom.empty.style.display = session.clips.length ? 'none' : 'grid';
   }
 
@@ -99,7 +99,7 @@
     }
   }
 
-  /** По тегу <video> на клип. Превью играет по прокси, если он есть. */
+  /** One <video> tag per clip. The preview plays the proxy when one exists. */
   function buildSlots() {
     dom.slots.innerHTML = '';
     videos = session.clips.map((clip, index) => {
@@ -153,7 +153,7 @@
     });
   }
 
-  /** Холст оверлея держится в физических пикселях экрана, иначе всё размывается. */
+  /** The overlay canvas is kept in physical device pixels, or everything looks soft. */
   function resizeOverlay() {
     const canvas = dom.overlay;
     const box = canvas.getBoundingClientRect();
@@ -163,8 +163,8 @@
     if (clock) render(clock.time);
   }
 
-  // Геометрия карты статична, поэтому считается один раз и пересчитывается только
-  // при смене размера холста или раскладки.
+  // Map geometry is static, so it is computed once and refreshed only when the canvas
+  // size or the layout changes.
   let mapPrepared = null;
   let mapKey = '';
 
@@ -181,10 +181,10 @@
     return mapPrepared;
   }
 
-  /** След за точкой: последние несколько секунд трека. */
+  /** The trail behind the dot: the last few seconds of the track. */
   function trailFor(time) {
     const widget = Widgets.get('map');
-    const step = 1 / 5;                       // пяти точек в секунду хватает
+    const step = 1 / 5;                       // five points per second is plenty
     const points = [];
     for (let t = Math.max(0, time - widget.TRAIL_S); t <= time; t += step) {
       const lat = SessionModel.sampleAt(session, 'lat', t);
@@ -228,8 +228,8 @@
 
     const lap = SessionModel.lapAt(session, time);
     dom['lap-label'].textContent = lap
-      ? `круг ${lap.n} · ${Clock.formatTime(SessionModel.lapTime(session, time))}`
-      : 'вне круга';
+      ? `lap ${lap.n} · ${Clock.formatTime(SessionModel.lapTime(session, time))}`
+      : 'out lap';
 
     for (const item of READOUT) {
       const value = SessionModel.sampleAt(session, item.channel, time);
@@ -243,9 +243,9 @@
   }
 
   /**
-   * Видео ведётся часами, а не наоборот. На воспроизведении даём ему играть самому и
-   * подтягиваем, только когда оно уехало заметно, — иначе постоянные присваивания
-   * currentTime дёргают картинку.
+   * The clock drives the video, not the other way round. While playing we let the
+   * element run on its own and only pull it back when it has drifted noticeably —
+   * assigning currentTime on every frame makes the picture stutter.
    */
   function syncVideos(time) {
     for (const slot of videos) {
@@ -258,7 +258,7 @@
       }
       element.style.visibility = 'visible';
 
-      // Переход между чанками: меняем источник и встаём на нужное место в новом файле.
+      // Crossing into another chunk: swap the source and land at the right spot.
       if (position.index !== slot.chunk) {
         slot.chunk = position.index;
         element.src = `/media/${clip.id}/${position.index}` +

@@ -1,11 +1,12 @@
 /**
- * Разгон и торможение. Полоса растёт от центра: вправо на тяге, влево на торможении.
- * Цвет берётся из sr-track — той же оценки, что красит трек на serious-racing.
+ * Acceleration and braking. The bar grows from the centre: right under power, left
+ * under braking. The colour comes from sr-track — the same score that paints the
+ * track line on serious-racing.
  */
 (function (register) {
   register({
     id: 'accel',
-    title: 'Разгон / торможение',
+    title: 'Acceleration / braking',
     defaultSize: [0.15, 0.095],
 
     draw(ctx, box, data) {
@@ -28,7 +29,7 @@
       const accel = data.accel === null || data.accel === undefined ? 0 : data.accel;
       W.value(ctx, `${accel >= 0 ? '+' : ''}${accel.toFixed(2)}`,
               box.x + box.w * 0.06, box.y + box.h * 0.58, box.h * 0.44);
-      W.label(ctx, score < -0.08 ? 'ТОРМОЖЕНИЕ' : (score > 0.08 ? 'ТЯГА' : 'G'),
+      W.label(ctx, score < -0.08 ? 'BRAKING' : (score > 0.08 ? 'POWER' : 'G'),
               box.x + box.w * 0.94, box.y + box.h * 0.54, box.h * 0.2, W.DIM, 'right');
     },
   });
