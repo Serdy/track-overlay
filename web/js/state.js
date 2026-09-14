@@ -41,7 +41,9 @@
     for (const id of ['track-name', 'session-info', 'sync-info', 'slots', 'overlay',
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
-                      'swap', 'segment', 'reset', 'cut-marks', 'pending-range']) {
+                      'swap', 'segment', 'reset', 'cut-marks', 'pending-range',
+                      'export', 'export-range', 'export-panel', 'export-stage',
+                      'export-percent', 'export-fill', 'export-cancel', 'export-result']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -178,6 +180,10 @@
     });
   }
 
+  function invalidateMap() {
+    mapCache.clear();
+  }
+
   function renderCutMarks() {
     dom['cut-marks'].innerHTML = '';
     dom.reset.disabled = layout.cuts.length <= 1;
@@ -251,6 +257,67 @@
     strip.style.width = `${((to - from) / session.duration) * 100}%`;
   }
 
+  let exporting = null;
+
+  /**
+   * Draws one overlay frame at the output resolution.
+   *
+   * The export calls exactly this, and so does the preview — which is the reason the two
+   * cannot end up showing different things.
+   */
+  function paintOverlay(ctx, time, frame) {
+    const score = Scoring.scoreAt(scores, session, time);
+    const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel', 'lat', 'lon'], time);
+    data.score = score;
+    data.scoreColor = SR_TRACK.scoreToColor(score, SR_TRACK.DEFAULT_CFG);
+    if (leanDisplay) {
+      data.leanValue = Display.at(leanDisplay.value, session, time);
+      data.leanSide = Display.at(leanDisplay.side, session, time);
+    }
+    if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
+
+    data.map = prepareMap(frame);
+    data.trail = trailFor(time);
+    Widgets.drawAll(ctx, layout.widgets, frame, data);
+  }
+
+  async function startExport() {
+    if (exporting) return;
+    const limit = Number(dom['export-range'].value);
+    const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, layout.output,
+                                 { duration: session.duration });
+
+    exporting = new AbortController();
+    dom['export-panel'].hidden = false;
+    dom['export-result'].textContent = '';
+    dom.export.disabled = true;
+    Clock.pause(clock);
+
+    const show = (done) => {
+      dom['export-percent'].textContent = `${Math.round(done * 100)}%`;
+      dom['export-fill'].style.width = `${done * 100}%`;
+    };
+
+    try {
+      const where = await ExportUI.run({
+        output,
+        duration: limit || null,
+        name: limit ? `preview_${limit}s.mp4` : 'final.mp4',
+        drawFrame: paintOverlay,
+        signal: exporting.signal,
+        onStage: (text) => { dom['export-stage'].textContent = text; },
+        onProgress: show,
+      });
+      dom['export-result'].textContent = `written: ${where}`;
+    } catch (error) {
+      dom['export-stage'].textContent = 'failed';
+      dom['export-result'].textContent = String(error.message || error);
+    } finally {
+      exporting = null;
+      dom.export.disabled = false;
+    }
+  }
+
   let saveTimer = null;
 
   function saveLayout() {
@@ -272,6 +339,10 @@
     dom.swap.addEventListener('click', swapFromPlayhead);
     dom.segment.addEventListener('click', toggleSegment);
     dom.reset.addEventListener('click', resetCuts);
+    dom.export.addEventListener('click', startExport);
+    dom['export-cancel'].addEventListener('click', () => {
+      if (exporting) exporting.abort();
+    });
 
     dom.timeline.addEventListener('pointerdown', (event) => {
       const scrub = (e) => {
@@ -317,22 +388,20 @@
     if (clock) render(clock.time);
   }
 
-  // Map geometry is static, so it is computed once and refreshed only when the canvas
-  // size or the layout changes.
-  let mapPrepared = null;
-  let mapKey = '';
+  // Map geometry is static for a given frame size, so it is projected once and kept.
+  // The cache is keyed by size because the preview and the export run at different
+  // resolutions and both go through here.
+  const mapCache = new Map();
 
   function prepareMap(frame) {
     const placement = layout.widgets.find((w) => w.type === 'map');
     if (!placement) return null;
-    const widget = Widgets.get('map');
-    const box = Widgets.boxFor(widget, placement, frame);
     const key = `${frame.width}x${frame.height}:${placement.pos.join(',')}:${placement.scale}`;
-    if (key !== mapKey) {
-      mapKey = key;
-      mapPrepared = widget.prepare(session, box);
+    if (!mapCache.has(key)) {
+      const widget = Widgets.get('map');
+      mapCache.set(key, widget.prepare(session, Widgets.boxFor(widget, placement, frame)));
     }
-    return mapPrepared;
+    return mapCache.get(key);
   }
 
   /** The trail behind the dot: the last few seconds of the track. */
@@ -353,21 +422,7 @@
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!layout) return;
-
-    const score = Scoring.scoreAt(scores, session, time);
-    const frame = { width: canvas.width, height: canvas.height };
-    const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel', 'lat', 'lon'], time);
-    data.score = score;
-    data.scoreColor = SR_TRACK.scoreToColor(score, SR_TRACK.DEFAULT_CFG);
-    if (leanDisplay) {
-      data.leanValue = Display.at(leanDisplay.value, session, time);
-      data.leanSide = Display.at(leanDisplay.side, session, time);
-    }
-    if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
-    data.map = prepareMap(frame);
-    data.trail = trailFor(time);
-
-    Widgets.drawAll(ctx, layout.widgets, frame, data);
+    paintOverlay(ctx, time, { width: canvas.width, height: canvas.height });
   }
 
   let lastFrame = 0;

@@ -23,6 +23,17 @@
 
   <section class="readout" id="readout"></section>
 
+  <div id="export-panel" class="export-panel" hidden>
+    <div class="export-row">
+      <strong id="export-stage">…</strong>
+      <span class="spacer"></span>
+      <code id="export-percent">0%</code>
+      <button id="export-cancel">Cancel</button>
+    </div>
+    <div class="export-track"><div id="export-fill"></div></div>
+    <div class="muted" id="export-result"></div>
+  </div>
+
   <footer class="transport">
     <button id="play" title="Space">▶</button>
     <button id="prev-lap" title="Arrow up">⏮</button>
@@ -31,6 +42,13 @@
     <button id="swap" title="Swap main view and inset from here (S)">⇄</button>
     <button id="segment" title="Swap for a stretch: click to mark the start, again to end it (D)">⇄ …</button>
     <button id="reset" title="Discard every camera switch and return to the default layout">↺</button>
+    <button id="export" title="Compose everything into one video">⬇ Export</button>
+    <select id="export-range" title="How much to render">
+      <option value="10">10 s</option>
+      <option value="60">1 min</option>
+      <option value="300">5 min</option>
+      <option value="0">whole session</option>
+    </select>
     <div class="timeline" id="timeline">
       <div class="laps" id="lap-marks"></div>
       <div class="cuts" id="cut-marks"></div>
@@ -47,6 +65,9 @@
   <script src="js/cuts.js"></script>
   <script src="js/scoring.js"></script>
   <script src="js/display.js"></script>
+  <script src="js/webm-muxer.min.js"></script>
+  <script src="js/export_overlay.js"></script>
+  <script src="js/export_ui.js"></script>
   <script src="js/widgets/index.js"></script>
   <script src="js/widgets/speed.js"></script>
   <script src="js/widgets/lean.js"></script>

@@ -1,0 +1,82 @@
+/**
+ * export_ui.js — the export button and its progress.
+ *
+ * The run has two halves with very different costs. The browser renders the telemetry
+ * layer, which is quick because the layer is small and mostly empty. ffmpeg then composes
+ * the cameras and burns the layer in, which is where the real time goes. Progress is
+ * therefore reported as a weighted pair rather than two bars.
+ */
+const ExportUI = (function () {
+
+  // Roughly how the wall-clock time splits, so one bar moves at an even pace.
+  const OVERLAY_SHARE = 0.35;
+  const POLL_MS = 500;
+
+  async function post(url, body, type) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: type ? { 'Content-Type': type } : {},
+      body,
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || `${url} answered ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /** Follows a render job until it stops, reporting its progress. */
+  async function follow(id, onProgress, signal) {
+    for (;;) {
+      if (signal && signal.aborted) {
+        await fetch(`/api/render/${id}/cancel`, { method: 'POST' }).catch(() => {});
+        throw new Error('cancelled');
+      }
+      const job = await (await fetch(`/api/render/${id}`)).json();
+      onProgress(job.progress);
+      if (job.state === 'done') return job;
+      if (job.state !== 'running') throw new Error(job.message || job.state);
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+  }
+
+  /**
+   * The whole run: render the layer, hand it over, compose, report where it landed.
+   *
+   * `duration` limits the render to the first N seconds, which is how a layout gets
+   * checked without waiting for the full session.
+   */
+  async function run({ output, drawFrame, duration, name, onStage, onProgress, signal }) {
+    const width = output.width;
+    const height = output.height;
+    const fps = output.fps;
+    const to = duration || output.duration;
+
+    onStage('rendering the telemetry layer');
+    const blob = await OverlayExport.render({
+      width, height, fps, from: 0, to, drawFrame, signal,
+      onProgress: (done) => onProgress(done * OVERLAY_SHARE),
+    });
+
+    onStage(`uploading the layer (${(blob.size / 1e6).toFixed(1)} MB)`);
+    await post('/api/overlay', blob, 'video/webm');
+
+    onStage('composing with ffmpeg');
+    const job = await post('/api/render', JSON.stringify({ duration: to, name }),
+                           'application/json');
+    const finished = await follow(job.id,
+      (done) => onProgress(OVERLAY_SHARE + done * (1 - OVERLAY_SHARE)), signal);
+
+    onStage('done');
+    onProgress(1);
+    return finished.output;
+  }
+
+  return { OVERLAY_SHARE, POLL_MS, follow, run };
+}());
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = ExportUI;
+} else {
+  window.ExportUI = ExportUI;
+}

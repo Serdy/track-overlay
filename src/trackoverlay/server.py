@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import threading
+import uuid
 import webbrowser
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -24,6 +26,30 @@ from pathlib import Path
 WEB_ROOT = Path(__file__).resolve().parent.parent.parent / "web"
 CHUNK = 1 << 20                       # 1 MiB per socket write
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+class Job:
+    """One background render, watched by the browser through polling."""
+
+    def __init__(self, identifier: str):
+        self.id = identifier
+        self.progress = 0.0
+        self.state = "running"          # running | done | failed | cancelled
+        self.message = ""
+        self.output: Path | None = None
+        self.cancel = threading.Event()
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "state": self.state,
+            "progress": round(self.progress, 4),
+            "message": self.message,
+            "output": str(self.output) if self.output else None,
+        }
+
+
+JOBS: dict[str, Job] = {}
 
 
 class RangeError(Exception):
@@ -159,6 +185,13 @@ class Handler(BaseHTTPRequestHandler):
             if not self.layout_path.exists():
                 return self._error(HTTPStatus.NOT_FOUND, "no layout saved yet")
             return self._send_file(self.layout_path)
+        if path.startswith("/api/render/"):
+            job = JOBS.get(path.rsplit("/", 1)[-1])
+            if job is None:
+                return self._error(HTTPStatus.NOT_FOUND, "no such render job")
+            return self._send(HTTPStatus.OK,
+                              json.dumps(job.as_dict()).encode(),
+                              "application/json; charset=utf-8")
         if path.startswith("/media/"):
             return self._serve_media(path, query)
 
@@ -182,6 +215,16 @@ class Handler(BaseHTTPRequestHandler):
         return self._send_file(target)
 
     def do_POST(self):
+        if self.path == "/api/overlay":
+            return self._receive_overlay()
+        if self.path == "/api/render":
+            return self._start_render()
+        if self.path.startswith("/api/render/") and self.path.endswith("/cancel"):
+            job = JOBS.get(self.path.split("/")[3])
+            if job is None:
+                return self._error(HTTPStatus.NOT_FOUND, "no such render job")
+            job.cancel.set()
+            return self._send(HTTPStatus.OK, b'{"cancelled":true}', "application/json")
         if self.path != "/api/layout":
             return self._error(HTTPStatus.NOT_FOUND, f"no route {self.path}")
         length = int(self.headers.get("Content-Length") or 0)
@@ -194,6 +237,71 @@ class Handler(BaseHTTPRequestHandler):
         self.layout_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self._send(HTTPStatus.OK, b'{"saved":true}', "application/json")
+
+
+    def _receive_overlay(self) -> None:
+        """Takes the telemetry layer the browser just encoded."""
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self._error(HTTPStatus.BAD_REQUEST, "the overlay is empty")
+        target = self.session_path.parent / "overlay.webm"
+        remaining = length
+        with target.open("wb") as handle:
+            while remaining > 0:
+                block = self.rfile.read(min(CHUNK, remaining))
+                if not block:
+                    break
+                handle.write(block)
+                remaining -= len(block)
+        self._send(HTTPStatus.OK,
+                   json.dumps({"saved": str(target), "bytes": length}).encode(),
+                   "application/json; charset=utf-8")
+
+    def _start_render(self) -> None:
+        """Launches ffmpeg in the background and hands back a job to poll."""
+        from . import render as render_module
+
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            request = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
+
+        session = json.loads(self.session_path.read_text(encoding="utf-8"))
+        if not self.layout_path.exists():
+            return self._error(HTTPStatus.BAD_REQUEST, "no layout has been saved yet")
+        layout = json.loads(self.layout_path.read_text(encoding="utf-8"))
+
+        out_dir = self.session_path.parent
+        overlay = out_dir / "overlay.webm"
+        output = out_dir / (request.get("name") or "final.mp4")
+
+        job = Job(uuid.uuid4().hex[:12])
+        JOBS[job.id] = job
+
+        def work() -> None:
+            try:
+                prepared = render_module.prepare_clips(session, out_dir / "work")
+                plan = render_module.build_plan(
+                    prepared, layout, overlay if overlay.exists() else None, output,
+                    duration_s=request.get("duration"))
+
+                def tick(done: float) -> None:
+                    job.progress = done
+                    if job.cancel.is_set():
+                        raise render_module.RenderError("cancelled")
+
+                render_module.run(plan, on_progress=tick)
+                job.output = output
+                job.state = "done"
+                job.progress = 1.0
+            except Exception as err:                 # noqa: BLE001 — reported to the browser
+                job.state = "cancelled" if job.cancel.is_set() else "failed"
+                job.message = str(err)[:500]
+
+        threading.Thread(target=work, daemon=True).start()
+        self._send(HTTPStatus.OK, json.dumps(job.as_dict()).encode(),
+                   "application/json; charset=utf-8")
 
 
 def make_server(session_path: Path, *, layout_path: Path | None = None,

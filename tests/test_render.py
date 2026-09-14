@@ -114,6 +114,16 @@ def test_overlay_is_the_last_layer(tmp_path):
     assert plan.args[plan.args.index("-map") + 1] == "[out]"
 
 
+def test_overlay_halves_are_recombined(tmp_path):
+    """The layer is colour over matte in one frame, because browsers will not encode alpha."""
+    overlay = tmp_path / "overlay.webm"
+    overlay.touch()
+    graph = graph_of(build_plan(SESSION, LAYOUT, overlay, tmp_path / "out.mp4"))
+    assert "crop=1920:1080:0:0" in graph          # colour, top half
+    assert "crop=1920:1080:0:1080" in graph       # matte, bottom half
+    assert "alphamerge" in graph
+
+
 def test_without_overlay_the_last_camera_layer_is_mapped(tmp_path):
     plan = build_plan(SESSION, LAYOUT, None, tmp_path / "out.mp4")
     assert plan.args[plan.args.index("-map") + 1].startswith("[b")

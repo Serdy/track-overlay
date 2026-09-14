@@ -1,0 +1,148 @@
+/**
+ * export_overlay.js — rendering the telemetry layer to a video ffmpeg can composite.
+ *
+ * This is the half of the pipeline the browser owns. It never touches the source footage:
+ * it encodes a small mostly-empty layer, not 4K video, which is why the GoPro codec is
+ * irrelevant here and why the whole thing is quick.
+ *
+ * Frames are drawn by the very same `Widgets.drawAll` the preview calls. That single rule
+ * is what keeps the export honest — there is no second drawing path that could drift.
+ *
+ * **On transparency.** WebCodecs advertises an `alpha: 'keep'` option, but no browser
+ * tested here will actually encode it: VP9, VP8, H.264 and AV1 all report support only
+ * with alpha switched off. So the layer is written as a frame of double height — colour
+ * on top, a greyscale matte of the alpha channel below — and ffmpeg puts the two back
+ * together with `alphamerge`. One encode and one file, so the halves cannot drift apart,
+ * which is the failure mode of shipping them as two videos.
+ *
+ * The matte is built with canvas compositing rather than a pixel loop. Reading two
+ * million pixels per frame in JavaScript would take longer than everything else combined.
+ */
+const OverlayExport = (function () {
+
+  const QUEUE_LIMIT = 12;          // frames allowed in flight before we wait
+  const CANDIDATES = [
+    { codec: 'vp09.00.10.08', muxer: 'V_VP9' },
+    { codec: 'vp8', muxer: 'V_VP8' },
+  ];
+
+  function supported() {
+    return typeof VideoEncoder !== 'undefined'
+      && typeof VideoFrame !== 'undefined'
+      && typeof OffscreenCanvas !== 'undefined';
+  }
+
+  /** The first codec this browser will actually encode at the given size. */
+  async function pickCodec(width, height, fps) {
+    for (const candidate of CANDIDATES) {
+      const config = {
+        codec: candidate.codec, width, height, framerate: fps,
+        bitrate: Math.round(width * height * fps * 0.02),
+      };
+      try {
+        const probe = await VideoEncoder.isConfigSupported(config);
+        if (probe.supported) return { ...candidate, config };
+      } catch (error) {
+        // An unknown codec string throws rather than reporting unsupported.
+      }
+    }
+    throw new Error('this browser cannot encode VP9 or VP8');
+  }
+
+  /** Waits until the encoder has drained enough to take more work. */
+  async function drain(encoder) {
+    while (encoder.encodeQueueSize > QUEUE_LIMIT) {
+      await new Promise((resolve) => setTimeout(resolve, 4));
+    }
+  }
+
+  /**
+   * Stacks one drawn frame into colour over matte.
+   *
+   * The matte is the alpha channel as luminance: white fill masked by the overlay's own
+   * alpha, then flattened onto black. Three canvas operations, all on the GPU side.
+   */
+  function stack(target, layer, scratch, width, height) {
+    const ctx = target.getContext('2d', { alpha: false });
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, width, height * 2);
+    ctx.drawImage(layer, 0, 0);                      // colour over black
+
+    const mask = scratch.getContext('2d');
+    mask.globalCompositeOperation = 'source-over';
+    mask.fillStyle = '#ffffff';
+    mask.fillRect(0, 0, width, height);
+    mask.globalCompositeOperation = 'destination-in';
+    mask.drawImage(layer, 0, 0);                     // white carrying the layer's alpha
+    mask.globalCompositeOperation = 'source-over';
+
+    ctx.drawImage(scratch, 0, height);               // flattened onto black: alpha as grey
+  }
+
+  /**
+   * Renders the overlay for a time range.
+   *
+   * `drawFrame(ctx, t, frame)` is supplied by the caller and is expected to be the same
+   * routine the preview uses.
+   */
+  async function render({ width, height, fps, from, to, drawFrame, onProgress, signal }) {
+    if (!supported()) throw new Error('this browser has no WebCodecs support');
+
+    const chosen = await pickCodec(width, height * 2, fps);
+    const layer = new OffscreenCanvas(width, height);
+    const scratch = new OffscreenCanvas(width, height);
+    const stacked = new OffscreenCanvas(width, height * 2);
+    const layerCtx = layer.getContext('2d', { alpha: true });
+
+    const muxer = new WebMMuxer.Muxer({
+      target: new WebMMuxer.ArrayBufferTarget(),
+      video: { codec: chosen.muxer, width, height: height * 2, frameRate: fps },
+    });
+
+    let failure = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (error) => { failure = error; },
+    });
+    encoder.configure(chosen.config);
+
+    const total = Math.max(1, Math.round((to - from) * fps));
+    for (let i = 0; i < total; i += 1) {
+      if (failure) throw failure;
+      if (signal && signal.aborted) {
+        encoder.close();
+        throw new Error('cancelled');
+      }
+      const t = from + i / fps;
+      layerCtx.clearRect(0, 0, width, height);
+      drawFrame(layerCtx, t, { width, height });
+      stack(stacked, layer, scratch, width, height);
+
+      const frame = new VideoFrame(stacked, {
+        timestamp: Math.round((i / fps) * 1e6),
+        duration: Math.round(1e6 / fps),
+      });
+      // A keyframe every two seconds keeps ffmpeg able to seek the layer.
+      encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+      frame.close();
+
+      await drain(encoder);
+      if (onProgress && i % fps === 0) onProgress(i / total);
+    }
+
+    await encoder.flush();
+    encoder.close();
+    if (failure) throw failure;
+    muxer.finalize();
+    if (onProgress) onProgress(1);
+    return new Blob([muxer.target.buffer], { type: 'video/webm' });
+  }
+
+  return { QUEUE_LIMIT, CANDIDATES, supported, pickCodec, stack, render };
+}());
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = OverlayExport;
+} else {
+  window.OverlayExport = OverlayExport;
+}

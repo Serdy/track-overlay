@@ -172,3 +172,37 @@ code { font-variant-numeric: tabular-nums; }
   border-color: #4da3ff;
   color: #4da3ff;
 }
+
+.export-panel {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.export-row { display: flex; gap: 10px; align-items: center; }
+
+.export-track {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 3px;
+  background: #0c0e12;
+  overflow: hidden;
+}
+
+.export-track div {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+.export-panel .muted { margin-top: 6px; min-height: 18px; }
+
+.transport select {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  font: inherit;
+}

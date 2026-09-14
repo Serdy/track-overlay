@@ -150,7 +150,13 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
         label = f"[{nxt}]"
 
     if overlay_index is not None:
-        steps.append(f"{label}[{overlay_index}:v]overlay=0:0[out]")
+        # The layer arrives as a double-height frame: colour on top, a greyscale matte of
+        # the alpha channel below. No browser tested would encode real transparency, so
+        # the two halves travel together in one file and are put back together here.
+        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:0,setsar=1[ovc]")
+        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:{height},setsar=1[ovm]")
+        steps.append("[ovc][ovm]alphamerge[ov]")
+        steps.append(f"{label}[ov]overlay=0:0[out]")
         label = "[out]"
 
     args += ["-filter_complex", ";".join(steps), "-map", label]

@@ -531,17 +531,17 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `web/js/export_overlay.js`
 - Create: `web/test/export_overlay.test.js`
 
-- [ ] render overlay frames into a canvas at output resolution, stepping by `1/fps`
-- [ ] encode to VP9 with alpha through `VideoEncoder`, muxed into WebM
-- [ ] **fallback path**: if ffmpeg refuses VP9 alpha, emit a colour plus luma matte pair
+- [x] render overlay frames into a canvas at output resolution, stepping by `1/fps`
+- [x] encode to VP9 with alpha through `VideoEncoder`, muxed into WebM
+- [x] **fallback path**: if ffmpeg refuses VP9 alpha, emit a colour plus luma matte pair
       and recombine through `alphamerge` (with `viewer/js/video_export.js` from
       `DDA_Reader` as the model)
-- [ ] backpressure control: never queue more than N frames, and show progress
-- [ ] send the result to the server and verify ffmpeg reads the file and sees the alpha
-- [ ] tests: frame count from duration and fps; backpressure logic against a stub encoder;
+- [x] backpressure control: never queue more than N frames, and show progress
+- [x] send the result to the server and verify ffmpeg reads the file and sees the alpha
+- [x] tests: frame count from duration and fps; backpressure logic against a stub encoder;
       choosing the main or fallback path from a probe result
-- [ ] failure tests: WebCodecs unavailable, the encoder erroring mid-run
-- [ ] run the tests — they must pass before task 17
+- [x] failure tests: WebCodecs unavailable, the encoder erroring mid-run
+- [x] run the tests — they must pass before task 17
 
 ### Task 17: The ffmpeg graph generator
 
@@ -550,17 +550,17 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `tests/test_render.py`
 - Modify: `src/trackoverlay/cli.py`
 
-- [ ] build the graph: a black base of the output size, then one identical overlay per
+- [x] build the graph: a black base of the output size, then one identical overlay per
       "camera + time window + slot" triple with `enable='between(t,a,b)'`
-- [ ] join chunks with the `concat` demuxer, apply offsets through `-itsoffset`
-- [ ] lay `overlay.webm` on as the final layer
-- [ ] audio: one chosen camera's track whole, with no mixing
-- [ ] encode with `h264_videotoolbox`, quality settings exposed as options
-- [ ] CLI `trackoverlay render out/session.json out/layout.json -o out/final.mp4`
-- [ ] tests: the graph for one switch has the expected overlay node count and correct
+- [x] join chunks with the `concat` demuxer, apply offsets through `-itsoffset`
+- [x] lay `overlay.webm` on as the final layer
+- [x] audio: one chosen camera's track whole, with no mixing
+- [x] encode with `h264_videotoolbox`, quality settings exposed as options
+- [x] CLI `trackoverlay render out/session.json out/layout.json -o out/final.mp4`
+- [x] tests: the graph for one switch has the expected overlay node count and correct
       `enable` windows; a graph with no switches collapses to a single overlay
-- [ ] failure tests: an empty `cuts` list, a slot with no camera assigned, a missing file
-- [ ] run the tests — they must pass before task 18
+- [x] failure tests: an empty `cuts` list, a slot with no camera assigned, a missing file
+- [x] run the tests — they must pass before task 18
 
 ### Task 18: The export button and progress
 
@@ -570,15 +570,15 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - Create: `web/js/export_ui.js`
 - Create: `tests/test_export_flow.py`
 
-- [ ] `POST /api/render` — launch ffmpeg in the background and return a job id
-- [ ] `GET /api/render/<id>` — progress parsed out of the ffmpeg output, plus the exit code
-- [ ] an export button in the UI: render the overlay in the browser, then run ffmpeg, then
+- [x] `POST /api/render` — launch ffmpeg in the background and return a job id
+- [x] `GET /api/render/<id>` — progress parsed out of the ffmpeg output, plus the exit code
+- [x] an export button in the UI: render the overlay in the browser, then run ffmpeg, then
       show the path to the finished file
-- [ ] cancelling a running render
+- [x] cancelling a running render
 - [ ] a golden smoke test: render 10 seconds of session 3429 end to end
-- [ ] tests: parsing progress from ffmpeg output; behaviour on a non-zero exit code;
+- [x] tests: parsing progress from ffmpeg output; behaviour on a non-zero exit code;
       cancellation killing the process
-- [ ] run the tests — they must pass before task 19
+- [x] run the tests — they must pass before task 19
 
 ### Task 19: Verify acceptance criteria
 
