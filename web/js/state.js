@@ -58,7 +58,7 @@
                       'export-done', 'export-download', 'export-reveal', 'export-error',
                       'open-picker', 'picker', 'picker-close', 'picker-up', 'picker-here',
                       'picker-roots', 'picker-list', 'picker-chosen', 'picker-clear',
-                      'picker-build', 'picker-status']) {
+                      'picker-build', 'picker-status', 'picker-build-id']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -370,6 +370,9 @@
 
   async function browse(path) {
     const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    // Written before the request, not only on failure: if this line never appears, the
+    // page is running an older copy of this file and nothing below it ever ran.
+    dom['picker-status'].textContent = 'reading the directory…';
     try {
       const response = await fetch(`/api/browse${query}`);
       if (!response.ok) {
@@ -665,7 +668,11 @@
 
     dom['open-picker'].addEventListener('click', () => {
       dom.picker.hidden = false;
-      dom['picker-status'].textContent = '';
+      // The stamp the page was served with, so a stale copy announces itself.
+      const script = [...document.scripts].find((s) => s.src.includes('state.js'));
+      const stamp = script && script.src.includes('?v=')
+        ? script.src.split('?v=')[1] : 'unstamped';
+      dom['picker-build-id'].textContent = `build ${stamp}`;
       browse('');
     });
     dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
