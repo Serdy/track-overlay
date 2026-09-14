@@ -241,12 +241,12 @@ GoPro MP4/LRV ┘        (общий таймлайн)     │
 - Create: `src/trackoverlay/__init__.py`
 - Create: `tests/__init__.py`
 
-- [ ] `git init`, первый коммит с текущим `tools/` и `docs/`
-- [ ] `uv init` + `uv python pin 3.12` (системный 3.14.2 слишком свеж для части колёс)
-- [ ] `pyproject.toml`: зависимости `numpy`, dev-зависимость `pytest`, точка входа CLI
-- [ ] `.gitignore`: `data/*.MP4`, `data/*.LRV`, `out/`, `__pycache__/`, `.venv/`,
+- [x] `git init`, первый коммит с текущим `tools/` и `docs/`
+- [x] `uv init` + `uv python pin 3.12` (системный 3.14.2 слишком свеж для части колёс)
+- [x] `pyproject.toml`: зависимости `numpy`, dev-зависимость `pytest`, точка входа CLI
+- [x] `.gitignore`: `data/*.MP4`, `data/*.LRV`, `out/`, `__pycache__/`, `.venv/`,
       но **не** игнорировать `data/*.csv` и `data/*.vbo` (мелкие, нужны как фикстуры)
-- [ ] проверить `uv run python -c "import numpy"` и `uv run pytest --version`
+- [x] проверить `uv run python -c "import numpy"` и `uv run pytest --version`
 
 ### Task 2: Парсер GPMF
 
@@ -256,16 +256,16 @@ GoPro MP4/LRV ┘        (общий таймлайн)     │
 - Create: `tests/test_gpmf.py`
 - Modify: `tools/gopro_dates.py` (переключить на общий модуль)
 
-- [ ] перенести из `tools/` поиск потока `gpmd` через ffprobe и извлечение через ffmpeg
-- [ ] разбор KLV с рекурсией по вложенным контейнерам (`STRM`), типы из таблицы `FMT`
-- [ ] `read_gps(path)` → список сэмплов `(t_utc, lat, lon, alt, speed_kmh, fix)` с
+- [x] перенести из `tools/` поиск потока `gpmd` через ffprobe и извлечение через ffmpeg
+- [x] разбор KLV с рекурсией по вложенным контейнерам (`STRM`), типы из таблицы `FMT`
+- [x] `read_gps(path)` → список сэмплов `(t_utc, lat, lon, alt, speed_kmh, fix)` с
       применением `SCAL` и раскладкой сэмплов блока по времени между соседними метками `GPSU`
-- [ ] `read_gpsu(path)` → первая и последняя UTC-метка, для определения окна записи
-- [ ] нарезать фикстуру: извлечь `gpmd` из `GH013429.MP4` в `tests/fixtures/`
-- [ ] тесты: разбор фикстуры даёт 707 блоков, `fix=3` везде, первая метка
+- [x] `read_gpsu(path)` → первая и последняя UTC-метка, для определения окна записи
+- [x] нарезать фикстуру: извлечь `gpmd` из `GH013429.MP4` в `tests/fixtures/`
+- [x] тесты: разбор фикстуры даёт 707 блоков, `fix=3` везде, первая метка
       `2026-09-12T12:29:35.340Z`, координаты в окрестности `48.055, 17.571`
-- [ ] тесты на ошибки: файл без потока `gpmd`, обрезанный буфер KLV
-- [ ] прогнать тесты — должны пройти до задачи 3
+- [x] тесты на ошибки: файл без потока `gpmd`, обрезанный буфер KLV
+- [x] прогнать тесты — должны пройти до задачи 3
 
 ### Task 3: Обнаружение и склейка чанков GoPro
 
