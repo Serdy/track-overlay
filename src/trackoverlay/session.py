@@ -123,6 +123,10 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
             # Duration of each chunk: the browser plays them through one <video> tag and
             # needs to know where one file ends and the next begins.
             "chunks": [round(c.duration_s, 3) for c in clip.chunks],
+            # The render skips scaling a clip that already matches its slot exactly,
+            # which is the difference between 9.5 and 3.6 seconds on a 30 second piece.
+            "width": clip.size[0],
+            "height": clip.size[1],
             "proxy": [str(p) for p in proxies] if proxies else None,
             "offset_s": round(result.offset_s, 3),
             "duration_s": round(clip.duration_s, 3),

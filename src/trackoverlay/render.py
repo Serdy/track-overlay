@@ -84,6 +84,37 @@ def _windows(layout: dict, duration: float) -> list[dict]:
     return spans
 
 
+def _pick_source(clip: dict, seek_s: float, needed_s: float,
+                 workdir: Path | None) -> tuple[str, float, bool]:
+    """Chooses what to feed ffmpeg for one clip, and where to seek inside it.
+
+    A clip split into chunks normally goes through the concat demuxer, but seeking into
+    a concat list is slow - measured at 19.8 s against 9.4 s for the same seek on a
+    single file. A short render usually needs only one chunk anyway, so when the window
+    fits inside one it is used directly and the seek is rebased onto it.
+
+    Returns the source path, the seek to apply, and whether the concat demuxer is needed.
+    """
+    files = clip.get("files") or []
+    durations = clip.get("chunks") or []
+    if len(files) <= 1:
+        return files[0], seek_s, False
+    if len(durations) != len(files):
+        return clip.get("_concat"), seek_s, True
+
+    start = 0.0
+    for path, length in zip(files, durations):
+        if seek_s < start + length - 1e-6:
+            # Everything needed sits inside this one chunk.
+            if seek_s + needed_s <= start + length + 1e-6:
+                return path, seek_s - start, False
+            break
+        start += length
+
+    # Spanning a joint: fall back to the full list, seeking from its beginning.
+    return clip.get("_concat"), seek_s, True
+
+
 def _even(value: float) -> int:
     """Rounds to an even number of pixels — h264 refuses odd dimensions."""
     return max(2, int(round(value / 2)) * 2)
@@ -128,43 +159,92 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     if missing:
         raise RenderError(f"the layout refers to clips absent from the session: {missing}")
 
+    # Whichever camera opens the main slot becomes the base, when that slot covers the
+    # whole frame. Compositing an opaque full-frame image onto a black canvas costs as
+    # much as the decode and the encode together - on a 30 second piece it was the
+    # difference between 9.5 and 3.6 seconds - and it achieves nothing.
+    opening_span = next((s for s in spans if s["slot"] == "main"), spans[0])
+    base_clip = None
+    if (rects.get(opening_span["slot"]) == [0, 0, 1, 1]
+            and opening_span["from"] <= 1e-6
+            and tuple(clips[opening_span["clip"]].get("width", 0)
+                      for _ in (0,)) != (0,)):
+        candidate = clips[opening_span["clip"]]
+        if (candidate.get("width"), candidate.get("height")) == (width, height):
+            base_clip = opening_span["clip"]
+
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1"]
-    # The base: a black frame the whole thing is composed onto.
-    args += ["-f", "lavfi", "-t", f"{total:.3f}", "-i", f"color=c=black:s={width}x{height}:r={fps}"]
+    if base_clip is None:
+        # Nothing fills the frame at the start, so a black canvas has to stand in.
+        args += ["-f", "lavfi", "-t", f"{total:.3f}",
+                 "-i", f"color=c=black:s={width}x{height}:r={fps}"]
 
     index = {}
     inputs = []
+    seeked: set[str] = set()
+    next_input = 0 if base_clip is not None else 1   # input 0 is the black canvas
     for clip_id in used:
         clip = clips[clip_id]
-        files = clip["files"]
-        # A clip split into chunks is joined by the concat demuxer, which needs a list
-        # file; a single file is passed straight through.
-        source = files[0] if len(files) == 1 else clip.get("_concat")
+        offset = clip["offset_s"]
+        source, seek, use_concat = _pick_source(
+            clip, max(0.0, -offset), total, None)
         if source is None:
             raise RenderError(f"clip {clip_id} has several chunks but no concat list")
-        if len(files) > 1:
+        if use_concat:
             args += ["-f", "concat", "-safe", "0"]
-        # The clip starts before or after the session zero; -itsoffset shifts its timeline
-        # so that the sync correction is applied by ffmpeg rather than by seeking.
-        args += ["-itsoffset", f"{clip['offset_s']:.3f}", "-i", str(source)]
-        index[clip_id] = len(index) + 1
+
+        # How the sync offset is applied depends on its sign, and getting this wrong is
+        # silent. A clip that starts *before* session zero has to be seeked into: a
+        # negative -itsoffset pushes its frames to negative timestamps, where ffmpeg
+        # drops them, and the usual setpts=PTS-STARTPTS then re-zeros what survives -
+        # quietly cancelling the correction and rendering the clip from its own first
+        # frame. Seeking also skips the decode of everything before the entry point,
+        # which is most of the cost on a preview from late in a session.
+        if offset < 0:
+            args += ["-ss", f"{seek:.3f}"]
+            seeked.add(clip_id)
+        else:
+            args += ["-itsoffset", f"{offset:.3f}"]
+        args += ["-i", str(source)]
+        index[clip_id] = next_input
+        next_input += 1
         inputs.append(str(source))
 
     overlay_index = None
     if overlay is not None:
         args += ["-i", str(overlay)]
-        overlay_index = len(index) + 1
+        # Counted from next_input, not from the clip count: input 0 is the black canvas
+        # only when no camera fills the frame, so the two do not line up.
+        overlay_index = next_input
+        next_input += 1
         inputs.append(str(overlay))
 
     steps = []
-    label = "[0:v]"
+    if base_clip is None:
+        label = "[0:v]"
+    else:
+        steps.append(f"[{index[base_clip]}:v]"
+                     + ("setpts=PTS-STARTPTS" if base_clip in seeked else "null")
+                     + "[base]")
+        label = "[base]"
+
     for n, span in enumerate(spans):
+        # The base camera's own opening window is already the canvas.
+        if base_clip is not None and span is opening_span:
+            continue
         x, y, w, h = rects.get(span["slot"], rects["main"])
         box_w, box_h = _even(w * width), _even(h * height)
+        source = clips[span["clip"]]
         src = f"v{n}"
-        steps.append(
-            f"[{index[span['clip']]}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=increase,"
-            f"crop={box_w}:{box_h},setpts=PTS-STARTPTS[{src}]")
+        timing = "setpts=PTS-STARTPTS" if span["clip"] in seeked else "null"
+        if (source.get("width"), source.get("height")) == (box_w, box_h):
+            # Already the right size: running the scaler would cost as much as the
+            # decode for nothing.
+            steps.append(f"[{index[span['clip']]}:v]{timing}[{src}]")
+        else:
+            steps.append(
+                f"[{index[span['clip']]}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=increase,"
+                f"crop={box_w}:{box_h},{timing}[{src}]")
         nxt = f"b{n}"
         steps.append(
             f"{label}[{src}]overlay=x={int(x * width)}:y={int(y * height)}:"

@@ -94,10 +94,31 @@ def test_scaling_uses_even_dimensions(tmp_path):
         assert int(size[0]) % 2 == 0 and int(size[1]) % 2 == 0
 
 
-def test_sync_offset_is_applied_per_input(tmp_path):
+def test_a_clip_starting_before_the_session_is_seeked_into(tmp_path):
+    """A negative -itsoffset would push frames to negative timestamps, where ffmpeg
+    drops them - silently cancelling the sync correction."""
     plan = build_plan(SESSION, LAYOUT, None, tmp_path / "out.mp4")
-    offsets = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-itsoffset"]
-    assert offsets == ["-10.000", "-9.000"]
+    seeks = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-ss"]
+    assert seeks == ["10.000", "9.000"]              # both clips start early
+    assert "-itsoffset" not in plan.args
+
+
+def test_a_clip_starting_after_the_session_is_delayed(tmp_path):
+    session = json.loads(json.dumps(SESSION))
+    session["clips"][0]["offset_s"] = 4.5
+    layout = {**LAYOUT, "cuts": [{"t": 0, "main": "cam_a", "pip": None}]}
+    plan = build_plan(session, layout, None, tmp_path / "out.mp4")
+    assert plan.args[plan.args.index("-itsoffset") + 1] == "4.500"
+    assert "-ss" not in plan.args
+
+
+def test_a_delayed_clip_keeps_its_timestamps(tmp_path):
+    """setpts=PTS-STARTPTS would re-zero the start and undo the delay."""
+    session = json.loads(json.dumps(SESSION))
+    session["clips"][0]["offset_s"] = 4.5
+    layout = {**LAYOUT, "cuts": [{"t": 0, "main": "cam_a", "pip": None}]}
+    graph = graph_of(build_plan(session, layout, None, tmp_path / "out.mp4"))
+    assert "setpts=PTS-STARTPTS" not in graph
 
 
 def test_chunked_clip_goes_through_concat(tmp_path):
@@ -273,3 +294,56 @@ def test_without_trimming_the_overlay_is_still_last(tmp_path):
     overlay.touch()
     graph = graph_of(build_plan(SESSION, LAYOUT, overlay, tmp_path / "out.mp4"))
     assert graph.split(";")[-1].endswith("[out]")
+
+
+def test_a_short_window_uses_one_chunk_instead_of_concat(tmp_path):
+    """Seeking into a concat list is slow - 19.8 s against 9.4 s for the same seek on a
+    single file - and a short render usually needs only one chunk."""
+    session = json.loads(json.dumps(SESSION))
+    session["clips"][1]["chunks"] = [700.0, 700.0]
+    layout = {**LAYOUT, "cuts": [{"t": 0, "main": "cam_b", "pip": None}]}
+    plan = build_plan(session, layout, None, tmp_path / "out.mp4", duration_s=30)
+    assert "/data/b1.mp4" in plan.inputs
+    assert "concat" not in plan.args
+
+
+def test_a_window_crossing_a_joint_still_concatenates(tmp_path):
+    session = json.loads(json.dumps(SESSION))
+    session["clips"][1]["chunks"] = [700.0, 700.0]
+    session["clips"][1]["offset_s"] = -690.0            # starts just before the joint
+    layout = {**LAYOUT, "cuts": [{"t": 0, "main": "cam_b", "pip": None}]}
+    plan = build_plan(session, layout, None, tmp_path / "out.mp4", duration_s=60)
+    assert "concat" in plan.args
+    assert "/tmp/b.txt" in plan.inputs
+
+
+def test_the_seek_is_rebased_onto_the_chosen_chunk(tmp_path):
+    session = json.loads(json.dumps(SESSION))
+    session["clips"][1]["chunks"] = [700.0, 700.0]
+    session["clips"][1]["offset_s"] = -900.0            # inside the second chunk
+    layout = {**LAYOUT, "cuts": [{"t": 0, "main": "cam_b", "pip": None}]}
+    plan = build_plan(session, layout, None, tmp_path / "out.mp4", duration_s=30)
+    assert "/data/b2.mp4" in plan.inputs
+    assert plan.args[plan.args.index("-ss") + 1] == "200.000"   # 900 - 700
+
+
+@pytest.mark.parametrize("full_frame_base", [True, False])
+def test_the_overlay_input_index_matches_its_position(tmp_path, full_frame_base):
+    """Input 0 is the black canvas only when no camera fills the frame, so the overlay's
+    index cannot be derived from the clip count alone."""
+    overlay = tmp_path / "overlay.mp4"
+    overlay.touch()
+    slots = ([{"id": "main", "rect": [0, 0, 1, 1]}] if full_frame_base
+             else [{"id": "main", "rect": [0.1, 0.1, 0.5, 0.5]}])
+    session = json.loads(json.dumps(SESSION))
+    for clip in session["clips"]:
+        clip["width"], clip["height"] = 1920, 1080
+    layout = {**LAYOUT, "slots": slots + [{"id": "pip", "rect": [0.7, 0.04, 0.28, 0.28]}]}
+
+    plan = build_plan(session, layout, overlay, tmp_path / "out.mp4")
+    import re
+    # ffmpeg numbers every -i, including the synthetic black canvas, which `inputs` does
+    # not list - so count the flags rather than the files.
+    last = sum(1 for a in plan.args if a == "-i") - 1
+    referenced = {int(m) for m in re.findall(r"\[(\d+):v\]crop=", graph_of(plan))}
+    assert referenced == {last}, "the overlay must be the last input"

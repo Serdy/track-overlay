@@ -40,6 +40,7 @@ class Chunk:
     start_utc: float | None
     end_utc: float | None
     proxy: Path | None
+    size: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,10 @@ class Clip:
     @property
     def has_gps(self) -> bool:
         return self.start_utc is not None
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return self.chunks[0].size if self.chunks else (0, 0)
 
     def proxies(self) -> list[Path] | None:
         """Proxy files, but only if every single chunk has one."""
@@ -100,6 +105,16 @@ def probe_duration(path: Path) -> float:
     return float(out)
 
 
+def probe_size(path: Path) -> tuple[int, int]:
+    """Frame size, so the render can skip scaling a clip that already fits."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        capture_output=True, text=True, check=True).stdout.strip()
+    width, _, height = out.partition("x")
+    return int(width), int(height)
+
+
 def _load_chunk(path: Path, index: int) -> Chunk:
     start = end = None
     try:
@@ -108,7 +123,8 @@ def _load_chunk(path: Path, index: int) -> Chunk:
             start, end = window.start_utc, window.end_utc
     except (gpmf.GpmfError, subprocess.CalledProcessError):
         pass                             # video without telemetry is a valid input too
-    return Chunk(path, index, probe_duration(path), start, end, find_proxy(path))
+    return Chunk(path, index, probe_duration(path), start, end, find_proxy(path),
+                 probe_size(path))
 
 
 def _check_joints(chunks: list[Chunk]) -> None:

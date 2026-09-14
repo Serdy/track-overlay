@@ -161,6 +161,20 @@ recording 3429: method xcorr correction -1.36s corr 0.9997 overlap 26.9min
 
 ## Two things that were harder than they look
 
+**Compositing cost.** Full-frame work in the filter graph costs as much as the decode and
+the encode together. Scaling a 1920x1080 clip to 1920x1080 is not free, and neither is
+laying an opaque full-frame image onto a black canvas - on a 30 second piece the two
+together were the difference between 9.5 and 3.6 seconds. So the camera that opens the
+main slot becomes the canvas rather than being composited onto one, and a clip that
+already matches its slot skips the scaler entirely.
+
+**Seeking, not offsetting.** A clip that starts before session zero has to be seeked into
+with `-ss`. A negative `-itsoffset` pushes its frames to negative timestamps, where ffmpeg
+drops them, and the usual `setpts=PTS-STARTPTS` then re-zeros whatever survives - quietly
+cancelling the sync correction and rendering the clip from its own first frame. The
+symptom is a video that looks fine until you notice the telemetry does not match the
+picture.
+
 **Synchronisation.** Both devices write UTC, so a coarse alignment is free — but it is
 not enough. On the session in `data/` the correlation peak sits 1.4 s away from where UTC
 puts it, and 1.4 s is 84 frames at 60 fps. The offset itself is rock steady across 27
