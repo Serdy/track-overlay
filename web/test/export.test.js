@@ -126,3 +126,62 @@ test('an aborted signal stops the polling', async () => {
 test('the two halves of the run add up to one', () => {
   assert.ok(ExportUI.OVERLAY_SHARE > 0 && ExportUI.OVERLAY_SHARE < 1);
 });
+
+
+// --- waiting for the encoder ------------------------------------------------
+
+test('a queue below the limit does not wait at all', async () => {
+  const encoder = { encodeQueueSize: 0 };
+  await OverlayExport.drain(encoder);          // must resolve without a listener
+});
+
+test('draining waits on the dequeue event when there is one', async () => {
+  let listener = null;
+  const encoder = {
+    encodeQueueSize: OverlayExport.QUEUE_LIMIT + 5,
+    ondequeue: null,
+    addEventListener: (_, fn) => { listener = fn; },
+    removeEventListener: () => { listener = null; },
+  };
+  const waiting = OverlayExport.drain(encoder);
+  assert.ok(listener, 'a dequeue listener should have been attached');
+  encoder.encodeQueueSize = 0;
+  listener();
+  await waiting;
+  assert.strictEqual(listener, null, 'the listener should be removed once drained');
+});
+
+test('the dequeue listener ignores a queue that is still too long', async () => {
+  let listener = null;
+  let removed = 0;
+  const encoder = {
+    encodeQueueSize: OverlayExport.QUEUE_LIMIT + 5,
+    ondequeue: null,
+    addEventListener: (_, fn) => { listener = fn; },
+    removeEventListener: () => { removed += 1; },
+  };
+  const waiting = OverlayExport.drain(encoder);
+  listener();                                   // still full
+  assert.strictEqual(removed, 0);
+  encoder.encodeQueueSize = 1;
+  listener();
+  await waiting;
+  assert.strictEqual(removed, 1);
+});
+
+test('without dequeue it falls back to yielding', async () => {
+  const encoder = { encodeQueueSize: OverlayExport.QUEUE_LIMIT + 1 };
+  const waiting = OverlayExport.drain(encoder);
+  encoder.encodeQueueSize = 0;
+  await waiting;
+});
+
+test('yielding to the loop does not go through a timer', async () => {
+  // setTimeout is clamped hard in a background tab; a MessageChannel round trip is not.
+  const original = global.setTimeout;
+  let used = false;
+  global.setTimeout = (...args) => { used = true; return original(...args); };
+  await OverlayExport.yieldToLoop();
+  global.setTimeout = original;
+  assert.strictEqual(used, false, 'yielding must not call setTimeout');
+});

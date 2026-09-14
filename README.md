@@ -135,7 +135,9 @@ uv run trackoverlay serve out/session.json
 Everything is saved to `out/layout.json` as you go, and reloaded next time.
 
 Press **Export** to compose. Start with the 10-second option to check the layout before
-committing to a full session. The same thing from a terminal:
+committing to a full session. The tab can be left in the background while it runs - the
+render loop is driven by encoder events rather than timers, which browsers clamp to about
+one call a second once a tab stops being visible. The same thing from a terminal:
 
 ```bash
 uv run trackoverlay render out/session.json out/layout.json \
