@@ -77,10 +77,17 @@ quick.
 uv sync
 ```
 
-### 1. Put the files somewhere
+### 1. Point it at the files
 
-Copy the GoPro files and the RaceBox export into `data/`. Chunks of one recording
-(`GH013429.MP4`, `GH023429.MP4`, …) all belong there — they are joined automatically.
+Either use the **Files** button in the editor, which browses the disk and picks the
+sources without copying anything — the server is already looking at the same filesystem,
+so pushing twenty-four gigabytes of footage through the browser to reach it would be
+pure waste. Picking one chunk of a GoPro recording takes the rest of that recording
+along, since they are one clip split at four gigabytes.
+
+Or copy the files into `data/` and use the command line, as below. Chunks of one
+recording (`GH013429.MP4`, `GH023429.MP4`, …) all belong together — they are joined
+automatically either way.
 
 RaceBox exports twice, because its **Bike Mode** setting replaces lateral acceleration
 with lean angle rather than adding it. Export the session both ways and keep both files;
@@ -133,6 +140,10 @@ uv run trackoverlay serve out/session.json
 | Shift telemetry against video | the `sync` slider |
 
 Everything is saved to `out/layout.json` as you go, and reloaded next time.
+
+When it finishes, **Download** saves the file through the browser and **Show in Finder**
+reveals it where it already is — which is usually what you want, since a finished render
+runs to hundreds of megabytes and downloading writes a second copy onto the same disk.
 
 Press **Export** to compose. Start with the 10-second option to check the layout before
 committing to a full session. The tab can be left in the background while it runs - the

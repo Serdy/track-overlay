@@ -239,3 +239,97 @@ code { font-variant-numeric: tabular-nums; }
 }
 
 .transport button.cutting { border-color: #f5bc00; color: #f5bc00; }
+
+#export-done { margin-top: 8px; }
+
+.linkbtn {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.linkbtn:hover { border-color: var(--muted); }
+
+.bar-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.bar-btn:hover { border-color: var(--muted); }
+
+.picker {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.picker-box {
+  width: min(760px, 92vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 14px;
+  gap: 10px;
+}
+
+.picker-head, .picker-path, .picker-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.picker-path code { color: var(--muted); font-size: 12px; }
+
+.picker-list {
+  flex: 1;
+  min-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0c0e12;
+}
+
+.picker-list div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.picker-list div:hover { background: rgba(255,255,255,0.05); }
+.picker-list .size { color: var(--muted); font-size: 12px; margin-left: auto; }
+.picker-list .on { color: var(--accent); }
+
+.picker button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.picker button:hover { border-color: var(--muted); }
+.picker button:disabled { opacity: 0.4; cursor: default; }
+
+#picker-roots button { margin-left: 6px; }

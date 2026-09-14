@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import subprocess
+import sys
 import threading
 import uuid
 import webbrowser
@@ -25,6 +27,25 @@ from pathlib import Path
 
 WEB_ROOT = Path(__file__).resolve().parent.parent.parent / "web"
 CHUNK = 1 << 20                       # 1 MiB per socket write
+
+# What the file browser will show. Video the tool can read, and the telemetry exports.
+BROWSABLE = {".mp4", ".mov", ".lrv", ".csv", ".vbo"}
+
+# Where it may look. The server listens on the loopback interface only, but there is no
+# reason for it to be able to list the whole filesystem either - footage lives in the
+# home directory or on the card, and nothing else needs to be reachable.
+def default_roots() -> list[Path]:
+    roots = [Path.home()]
+    volumes = Path("/Volumes")          # where a camera card mounts on macOS
+    if volumes.is_dir():
+        roots.append(volumes)
+    return roots
+
+
+def inside_roots(target: Path, roots: list[Path]) -> bool:
+    resolved = target.resolve()
+    return any(resolved == root or root in resolved.parents
+               for root in (r.resolve() for r in roots))
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
@@ -109,6 +130,7 @@ class Handler(BaseHTTPRequestHandler):
     session_path: Path
     layout_path: Path
     media: Media
+    roots: list[Path]
 
     def log_message(self, fmt, *args):      # quieter than the default logger
         pass
@@ -200,6 +222,10 @@ class Handler(BaseHTTPRequestHandler):
                               "application/json; charset=utf-8")
         if path.startswith("/media/"):
             return self._serve_media(path, query)
+        if path.startswith("/api/output/"):
+            return self._serve_output(path)
+        if path == "/api/browse":
+            return self._browse(query)
 
         # Editor statics. Canonicalise the path and make sure it stayed inside web/ —
         # otherwise ../ would lead out.
@@ -225,6 +251,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._receive_overlay()
         if self.path == "/api/render":
             return self._start_render()
+        if self.path == "/api/reveal":
+            return self._reveal_output()
+        if self.path == "/api/build":
+            return self._start_build()
         if self.path.startswith("/api/render/") and self.path.endswith("/cancel"):
             job = JOBS.get(self.path.split("/")[3])
             if job is None:
@@ -244,6 +274,134 @@ class Handler(BaseHTTPRequestHandler):
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         self._send(HTTPStatus.OK, b'{"saved":true}', "application/json")
 
+
+    def _browse(self, query: str) -> None:
+        """Lists one directory, so the editor can pick source files without uploading them.
+
+        Nothing is copied: the server already has the disk in front of it, and pushing
+        four gigabytes of footage through the browser to reach the same machine would be
+        pure waste.
+        """
+        from urllib.parse import parse_qs, unquote
+
+        wanted = unquote((parse_qs(query).get("path") or [""])[0])
+        target = Path(wanted).expanduser() if wanted else self.roots[0]
+        if not inside_roots(target, self.roots):
+            return self._error(HTTPStatus.FORBIDDEN,
+                               "only the home directory and mounted volumes are browsable")
+        if not target.is_dir():
+            return self._error(HTTPStatus.NOT_FOUND, f"no such directory {target}")
+
+        folders, files = [], []
+        try:
+            for entry in sorted(target.iterdir(), key=lambda e: e.name.lower()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir():
+                    folders.append({"name": entry.name, "path": str(entry)})
+                elif entry.suffix.lower() in BROWSABLE:
+                    files.append({"name": entry.name, "path": str(entry),
+                                  "size": entry.stat().st_size})
+        except PermissionError:
+            return self._error(HTTPStatus.FORBIDDEN, f"{target} is not readable")
+
+        parent = str(target.parent) if inside_roots(target.parent, self.roots) else None
+        payload = {"path": str(target), "parent": parent,
+                   "roots": [str(r) for r in self.roots],
+                   "folders": folders, "files": files}
+        self._send(HTTPStatus.OK, json.dumps(payload).encode(),
+                   "application/json; charset=utf-8")
+
+    def _start_build(self) -> None:
+        """Assembles a session from files the editor picked, in the background."""
+        from .session import build_session
+
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            request = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
+
+        picked = [Path(p) for p in request.get("files", [])]
+        if not picked:
+            return self._error(HTTPStatus.BAD_REQUEST, "no files were chosen")
+        outside = [str(p) for p in picked if not inside_roots(p, self.roots)]
+        if outside:
+            return self._error(HTTPStatus.FORBIDDEN, f"outside the browsable roots: {outside}")
+
+        telemetry = [p for p in picked if p.suffix.lower() in (".csv", ".vbo")]
+        videos = [p for p in picked if p.suffix.lower() in (".mp4", ".mov")]
+
+        job = Job(uuid.uuid4().hex[:12])
+        JOBS[job.id] = job
+
+        def work() -> None:
+            try:
+                job.progress = 0.1
+                session = build_session(telemetry, videos, track=request.get("track", ""))
+                job.progress = 0.9
+                session.write(self.session_path)
+                job.output = self.session_path
+                # The whitelist is derived from the session, so it has to follow it.
+                type(self).media = Media.from_session(json.loads(
+                    self.session_path.read_text(encoding="utf-8")))
+                job.state = "done"
+                job.progress = 1.0
+            except Exception as err:                 # noqa: BLE001 - reported to the browser
+                job.state = "failed"
+                job.message = str(err)[:500]
+
+        threading.Thread(target=work, daemon=True).start()
+        self._send(HTTPStatus.OK, json.dumps(job.as_dict()).encode(),
+                   "application/json; charset=utf-8")
+
+    def _serve_output(self, path: str) -> None:
+        """Hands back a rendered file as a download.
+
+        Only the output directory is reachable, and only by bare filename: the editor
+        never needs to name anything else, and a path that cannot contain a separator
+        cannot escape.
+        """
+        name = path.rsplit("/", 1)[-1]
+        if not name or "/" in name or name.startswith("."):
+            return self._error(HTTPStatus.BAD_REQUEST, "bad output name")
+        target = self.session_path.parent / name
+        if not target.is_file():
+            return self._error(HTTPStatus.NOT_FOUND, f"no rendered file {name}")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(target.stat().st_size))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.end_headers()
+        with target.open("rb") as handle:
+            while block := handle.read(CHUNK):
+                self.wfile.write(block)
+
+    def _reveal_output(self) -> None:
+        """Shows the file in Finder, which beats downloading a copy of it.
+
+        A finished render runs to hundreds of megabytes; pulling it through the browser
+        would write a second copy onto the same disk for no reason.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            request = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
+        name = (request.get("name") or "").strip()
+        if not name or "/" in name:
+            return self._error(HTTPStatus.BAD_REQUEST, "bad output name")
+        target = self.session_path.parent / name
+        if not target.exists():
+            return self._error(HTTPStatus.NOT_FOUND, f"no rendered file {name}")
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(target)])
+        elif sys.platform.startswith("linux"):
+            subprocess.Popen(["xdg-open", str(target.parent)])
+        else:
+            return self._error(HTTPStatus.NOT_IMPLEMENTED,
+                               "revealing a file is only wired up for macOS and Linux")
+        self._send(HTTPStatus.OK, b'{"revealed":true}', "application/json")
 
     def _receive_overlay(self) -> None:
         """Takes the telemetry layer the browser just encoded."""
@@ -318,12 +476,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(session_path: Path, *, layout_path: Path | None = None,
-                port: int = 8712) -> ThreadingHTTPServer:
+                port: int = 8712, roots: list[Path] | None = None) -> ThreadingHTTPServer:
     payload = json.loads(session_path.read_text(encoding="utf-8"))
     handler = type("BoundHandler", (Handler,), {
         "session_path": session_path,
         "layout_path": layout_path or session_path.with_name("layout.json"),
         "media": Media.from_session(payload),
+        "roots": roots or default_roots(),
     })
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 

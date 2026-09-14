@@ -13,7 +13,32 @@
     <span class="muted" id="session-info"></span>
     <span class="spacer"></span>
     <span class="muted" id="sync-info"></span>
+    <button id="open-picker" class="bar-btn" title="Choose the files for a session">📂 Files</button>
   </header>
+
+  <div id="picker" class="picker" hidden>
+    <div class="picker-box">
+      <div class="picker-head">
+        <strong>Choose source files</strong>
+        <span class="spacer"></span>
+        <button id="picker-close">✕</button>
+      </div>
+      <div class="picker-path">
+        <button id="picker-up">↑</button>
+        <code id="picker-here"></code>
+        <span class="spacer"></span>
+        <span id="picker-roots"></span>
+      </div>
+      <div class="picker-list" id="picker-list"></div>
+      <div class="picker-foot">
+        <span class="muted" id="picker-chosen">nothing chosen</span>
+        <span class="spacer"></span>
+        <button id="picker-clear">Clear</button>
+        <button id="picker-build">Build session</button>
+      </div>
+      <div class="muted" id="picker-status"></div>
+    </div>
+  </div>
 
   <main id="stage">
     <div id="slots"></div>
@@ -31,7 +56,13 @@
       <button id="export-cancel">Cancel</button>
     </div>
     <div class="export-track"><div id="export-fill"></div></div>
-    <div class="muted" id="export-result"></div>
+    <div class="export-row" id="export-done" hidden>
+      <span class="muted" id="export-result"></span>
+      <span class="spacer"></span>
+      <a id="export-download" class="linkbtn" download>⬇ Download</a>
+      <button id="export-reveal">Show in Finder</button>
+    </div>
+    <div class="muted" id="export-error"></div>
   </div>
 
   <footer class="transport">
@@ -78,6 +109,7 @@
   <script src="js/cuts.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/ranges.js"></script>
+  <script src="js/picker.js"></script>
   <script src="js/scoring.js"></script>
   <script src="js/display.js"></script>
   <script src="js/webm-muxer.min.js"></script>

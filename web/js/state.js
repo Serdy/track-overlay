@@ -54,7 +54,11 @@
                       'cut-marks', 'gap-marks', 'pending-range',
                       'resolution', 'nudge', 'nudge-value',
                       'export', 'export-range', 'export-panel', 'export-stage',
-                      'export-percent', 'export-fill', 'export-cancel', 'export-result']) {
+                      'export-percent', 'export-fill', 'export-cancel', 'export-result',
+                      'export-done', 'export-download', 'export-reveal', 'export-error',
+                      'open-picker', 'picker', 'picker-close', 'picker-up', 'picker-here',
+                      'picker-roots', 'picker-list', 'picker-chosen', 'picker-clear',
+                      'picker-build', 'picker-status']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -359,6 +363,96 @@
 
   let exporting = null;
   let dragging = null;
+  let chosen = new Set();
+  let listing = null;
+
+  // --- choosing source files -------------------------------------------------
+
+  async function browse(path) {
+    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    const response = await fetch(`/api/browse${query}`);
+    if (!response.ok) {
+      dom['picker-status'].textContent = (await response.json()).error || 'cannot read that';
+      return;
+    }
+    listing = await response.json();
+    renderListing();
+  }
+
+  function renderListing() {
+    dom['picker-here'].textContent = listing.path;
+    dom['picker-up'].disabled = !listing.parent;
+
+    dom['picker-roots'].innerHTML = '';
+    for (const root of listing.roots) {
+      const button = document.createElement('button');
+      button.textContent = root === '/Volumes' ? 'Volumes' : 'Home';
+      button.addEventListener('click', () => browse(root));
+      dom['picker-roots'].appendChild(button);
+    }
+
+    dom['picker-list'].innerHTML = '';
+    for (const folder of listing.folders) {
+      const row = document.createElement('div');
+      row.innerHTML = `<span>📁</span><span>${folder.name}</span>`;
+      row.addEventListener('click', () => browse(folder.path));
+      dom['picker-list'].appendChild(row);
+    }
+    for (const file of listing.files) {
+      const row = document.createElement('div');
+      const on = chosen.has(file.path);
+      row.className = on ? 'on' : '';
+      row.innerHTML = `<span>${on ? '☑' : '☐'}</span><span>${file.name}</span>`
+        + `<span class="size">${Picker.humanSize(file.size)}</span>`;
+      row.addEventListener('click', () => toggleFile(file));
+      dom['picker-list'].appendChild(row);
+    }
+    updateChosen();
+  }
+
+  /** Picking one GoPro chunk takes the rest of its recording along. */
+  function toggleFile(file) {
+    const group = Picker.sameRecording(file.name, listing.files);
+    const paths = listing.files
+      .filter((f) => group.includes(f.name))
+      .map((f) => f.path);
+    const turningOff = chosen.has(file.path);
+    for (const path of paths) {
+      if (turningOff) chosen.delete(path);
+      else chosen.add(path);
+    }
+    renderListing();
+  }
+
+  function updateChosen() {
+    const paths = [...chosen];
+    dom['picker-chosen'].textContent = Picker.describe(paths);
+    const blocked = Picker.missing(paths);
+    dom['picker-build'].disabled = Boolean(blocked);
+    dom['picker-build'].title = blocked || 'Assemble the session from these files';
+  }
+
+  async function buildSession() {
+    dom['picker-build'].disabled = true;
+    dom['picker-status'].textContent = 'reading the files…';
+    try {
+      const started = await (await fetch('/api/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: [...chosen] }),
+      })).json();
+      if (started.error) throw new Error(started.error);
+
+      const job = await ExportUI.follow(started.id, (done) => {
+        dom['picker-status'].textContent = `building… ${Math.round(done * 100)}%`;
+      });
+      dom['picker-status'].textContent = 'done, reloading';
+      if (job) window.location.reload();
+    } catch (error) {
+      dom['picker-status'].textContent = String(error.message || error);
+      updateChosen();
+    }
+  }
 
   /** Widget sizes as fractions of the frame, for hit testing and clamping. */
   function widgetSizes() {
@@ -481,7 +575,8 @@
     exporting = new AbortController();
     await flushLayout();
     dom['export-panel'].hidden = false;
-    dom['export-result'].textContent = '';
+    dom['export-done'].hidden = true;
+    dom['export-error'].textContent = '';
     dom.export.disabled = true;
     Clock.pause(clock);
 
@@ -503,10 +598,15 @@
         onStage: (text) => { dom['export-stage'].textContent = text; },
         onProgress: show,
       });
+      const name = String(where).split('/').pop();
       dom['export-result'].textContent = `written: ${where}`;
+      dom['export-download'].href = `/api/output/${encodeURIComponent(name)}`;
+      dom['export-download'].setAttribute('download', name);
+      dom['export-reveal'].dataset.name = name;
+      dom['export-done'].hidden = false;
     } catch (error) {
       dom['export-stage'].textContent = 'failed';
-      dom['export-result'].textContent = String(error.message || error);
+      dom['export-error'].textContent = String(error.message || error);
     } finally {
       exporting = null;
       dom.export.disabled = false;
@@ -554,6 +654,19 @@
     dom.reset.addEventListener('click', resetLayout);
     dom.export.addEventListener('click', startExport);
 
+    dom['open-picker'].addEventListener('click', () => {
+      dom.picker.hidden = false;
+      dom['picker-status'].textContent = '';
+      browse('');
+    });
+    dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
+    dom['picker-up'].addEventListener('click', () => listing && browse(listing.parent));
+    dom['picker-clear'].addEventListener('click', () => { chosen.clear(); renderListing(); });
+    dom['picker-build'].addEventListener('click', buildSession);
+    dom.picker.addEventListener('click', (event) => {
+      if (event.target === dom.picker) dom.picker.hidden = true;
+    });
+
     dom.overlay.classList.add('editing');
     dom.overlay.addEventListener('pointerdown', beginDrag);
     dom.overlay.addEventListener('pointermove', continueDrag);
@@ -570,6 +683,16 @@
     dom.nudge.addEventListener('input', () => applyNudge(Number(dom.nudge.value)));
     dom['export-cancel'].addEventListener('click', () => {
       if (exporting) exporting.abort();
+    });
+
+    dom['export-reveal'].addEventListener('click', async () => {
+      const name = dom['export-reveal'].dataset.name;
+      if (!name) return;
+      await fetch('/api/reveal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }).catch(() => {});
     });
 
     dom.timeline.addEventListener('pointerdown', (event) => {

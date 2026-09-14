@@ -48,7 +48,10 @@ def live(tmp_path):
         "clips": [{"id": "cam_1", "files": [str(media)], "proxy": [str(proxy)]}],
     }), encoding="utf-8")
 
-    httpd = make_server(session, layout_path=tmp_path / "layout.json", port=0)
+    # The browsable roots are pointed at the temporary directory: pytest puts it under
+    # /var/folders, which is deliberately outside the defaults.
+    httpd = make_server(session, layout_path=tmp_path / "layout.json", port=0,
+                        roots=[tmp_path])
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}", tmp_path
     httpd.shutdown()
@@ -186,3 +189,78 @@ def test_empty_overlay_is_rejected(live):
     with pytest.raises(urllib.error.HTTPError) as err:
         urllib.request.urlopen(request)
     assert err.value.code == 400
+
+
+def test_browsing_lists_a_directory(live):
+    base, folder = live
+    (folder / "clips").mkdir()
+    (folder / "session.csv").write_text("Record,Time,Speed\n")
+    (folder / "notes.txt").write_text("ignored")
+
+    listing = json.load(fetch(base, f"/api/browse?path={folder}"))
+    assert [f["name"] for f in listing["folders"]] == ["clips"]
+
+    names = [f["name"] for f in listing["files"]]
+    # Only what the tool can read is offered; everything else is noise.
+    assert "session.csv" in names
+    assert "notes.txt" not in names
+    assert all(f["size"] >= 0 for f in listing["files"])
+
+
+def test_browsing_hides_dotfiles(live):
+    base, folder = live
+    (folder / ".hidden.csv").write_text("x")
+    listing = json.load(fetch(base, f"/api/browse?path={folder}"))
+    assert all(not f["name"].startswith(".") for f in listing["files"])
+
+
+def test_browsing_outside_the_roots_is_refused(live):
+    """The server listens on loopback only, but there is still no reason for it to be
+    able to list the whole filesystem."""
+    base, _ = live
+    with pytest.raises(urllib.error.HTTPError) as err:
+        fetch(base, "/api/browse?path=/etc")
+    assert err.value.code == 403
+
+
+def test_browsing_a_missing_directory(live):
+    base, folder = live
+    with pytest.raises(urllib.error.HTTPError) as err:
+        fetch(base, f"/api/browse?path={folder / 'nope'}")
+    assert err.value.code == 404
+
+
+def test_building_needs_files(live):
+    base, _ = live
+    request = urllib.request.Request(
+        base + "/api/build", data=b"{}",
+        headers={"Content-Type": "application/json"}, method="POST")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(request)
+    assert err.value.code == 400
+
+
+def test_building_refuses_files_outside_the_roots(live):
+    base, _ = live
+    request = urllib.request.Request(
+        base + "/api/build", data=json.dumps({"files": ["/etc/passwd"]}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(request)
+    assert err.value.code == 403
+
+
+def test_a_rendered_file_can_be_downloaded(live):
+    base, folder = live
+    (folder / "final.mp4").write_bytes(b"pretend video")
+    response = fetch(base, "/api/output/final.mp4")
+    assert response.read() == b"pretend video"
+    assert "attachment" in response.headers["Content-Disposition"]
+
+
+@pytest.mark.parametrize("name", ["../pyproject.toml", ".hidden", ""])
+def test_a_download_cannot_escape_the_output_directory(live, name):
+    base, _ = live
+    with pytest.raises(urllib.error.HTTPError) as err:
+        fetch(base, f"/api/output/{name}")
+    assert err.value.code in (400, 404)
