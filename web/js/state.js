@@ -11,6 +11,8 @@
   let clock = null;
   let videos = [];
   let scores = null;
+  let leanDisplay = null;
+  let scoreSides = null;
   let layout = null;
   let segmentStart = null;      // set while a stretch is being marked out
 
@@ -31,7 +33,7 @@
 
   const READOUT = [
     { channel: 'speed', label: 'km/h', digits: 0 },
-    { channel: 'lean', label: 'lean', digits: 1, suffix: '°' },
+    { channel: 'lean', label: 'lean', digits: 0, suffix: '°' },
     { channel: 'accel', label: 'G', digits: 2 },
   ];
 
@@ -56,6 +58,11 @@
     // The acceleration score is computed once for the whole session: it is a pass over
     // forty thousand samples, not something to redo on every frame.
     scores = Scoring.scoreSession(session);
+    // Steadied once for the whole session: a per-frame filter with memory would depend
+    // on the order frames are visited in, and scrubbing visits them out of order.
+    leanDisplay = session.channels.lean
+      ? Display.lean(session.channels.lean.samples, session.rate) : null;
+    scoreSides = scores ? Display.scoreSide(scores) : null;
     layout = await loadLayout();
 
     describe();
@@ -333,6 +340,11 @@
     const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel', 'lat', 'lon'], time);
     data.score = score;
     data.scoreColor = SR_TRACK.scoreToColor(score, SR_TRACK.DEFAULT_CFG);
+    if (leanDisplay) {
+      data.leanValue = Display.at(leanDisplay.value, session, time);
+      data.leanSide = Display.at(leanDisplay.side, session, time);
+    }
+    if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
     data.map = prepareMap(frame);
     data.trail = trailFor(time);
 
@@ -360,7 +372,9 @@
       : 'out lap';
 
     for (const item of READOUT) {
-      const value = SessionModel.sampleAt(session, item.channel, time);
+      const value = item.channel === 'lean' && leanDisplay
+        ? Display.at(leanDisplay.value, session, time)
+        : SessionModel.sampleAt(session, item.channel, time);
       const node = dom.readout.querySelector(`[data-channel="${item.channel}"]`);
       node.textContent = value === null
         ? '—' : value.toFixed(item.digits) + (item.suffix || '');

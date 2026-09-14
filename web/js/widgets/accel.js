@@ -2,6 +2,10 @@
  * Acceleration and braking. The bar grows from the centre: right under power, left
  * under braking. The colour comes from sr-track — the same score that paints the
  * track line on serious-racing.
+ *
+ * The bar follows the score directly, but the label comes from `display.js` with
+ * hysteresis applied: a plain threshold makes it flicker while coasting, when the score
+ * hovers around zero.
  */
 (function (register) {
   register({
@@ -29,7 +33,9 @@
       const accel = data.accel === null || data.accel === undefined ? 0 : data.accel;
       W.value(ctx, `${accel >= 0 ? '+' : ''}${accel.toFixed(2)}`,
               box.x + box.w * 0.06, box.y + box.h * 0.58, box.h * 0.44);
-      W.label(ctx, score < -0.08 ? 'BRAKING' : (score > 0.08 ? 'POWER' : 'G'),
+      const side = data.scoreSide === undefined || data.scoreSide === null
+        ? 0 : data.scoreSide;
+      W.label(ctx, side < 0 ? 'BRAKING' : (side > 0 ? 'POWER' : 'G'),
               box.x + box.w * 0.94, box.y + box.h * 0.54, box.h * 0.2, W.DIM, 'right');
     },
   });
