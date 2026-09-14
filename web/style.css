@@ -276,6 +276,10 @@ code { font-variant-numeric: tabular-nums; }
   background: rgba(0, 0, 0, 0.6);
 }
 
+/* display:grid above outranks the hidden attribute, and an invisible sheet over the
+   whole page swallows every click behind it. */
+.picker[hidden] { display: none; }
+
 .picker-box {
   width: min(760px, 92vw);
   max-height: 84vh;
@@ -288,13 +292,12 @@ code { font-variant-numeric: tabular-nums; }
   gap: 10px;
 }
 
-.picker-head, .picker-path, .picker-foot {
+.picker-head, .picker-foot {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-.picker-path code { color: var(--muted); font-size: 12px; }
 
 .picker-list {
   flex: 1;
@@ -316,7 +319,6 @@ code { font-variant-numeric: tabular-nums; }
 
 .picker-list div:hover { background: rgba(255,255,255,0.05); }
 .picker-list .size { color: var(--muted); font-size: 12px; margin-left: auto; }
-.picker-list .on { color: var(--accent); }
 
 .picker button {
   padding: 5px 10px;
@@ -332,4 +334,4 @@ code { font-variant-numeric: tabular-nums; }
 .picker button:hover { border-color: var(--muted); }
 .picker button:disabled { opacity: 0.4; cursor: default; }
 
-#picker-roots button { margin-left: 6px; }
+.picker-list .muted { border: 0; cursor: default; }

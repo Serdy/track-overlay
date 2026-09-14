@@ -79,11 +79,11 @@ uv sync
 
 ### 1. Point it at the files
 
-Either use the **Files** button in the editor, which browses the disk and picks the
-sources without copying anything — the server is already looking at the same filesystem,
-so pushing twenty-four gigabytes of footage through the browser to reach it would be
-pure waste. Picking one chunk of a GoPro recording takes the rest of that recording
-along, since they are one clip split at four gigabytes.
+Either use the **Files** button in the editor, which opens the macOS file dialog and
+notes down the paths without copying anything — the server is already looking at the
+same filesystem, so pushing twenty-four gigabytes of footage through the browser to
+reach it would be pure waste. Select every chunk of a GoPro recording; they are one
+clip split at four gigabytes and are joined back together automatically.
 
 Or copy the files into `data/` and use the command line, as below. Chunks of one
 recording (`GH013429.MP4`, `GH023429.MP4`, …) all belong together — they are joined

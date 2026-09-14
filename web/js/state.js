@@ -56,9 +56,9 @@
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result',
                       'export-done', 'export-download', 'export-reveal', 'export-error',
-                      'open-picker', 'picker', 'picker-close', 'picker-up', 'picker-here',
-                      'picker-roots', 'picker-list', 'picker-chosen', 'picker-clear',
-                      'picker-build', 'picker-status', 'picker-build-id']) {
+                      'open-picker', 'picker', 'picker-close', 'picker-list',
+                      'picker-add', 'picker-chosen', 'picker-clear', 'picker-build',
+                      'picker-status', 'picker-build-id']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -364,80 +364,54 @@
   let exporting = null;
   let dragging = null;
   let chosen = new Set();
-  let listing = null;
 
   // --- choosing source files -------------------------------------------------
 
-  async function browse(path) {
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    // Written before the request, not only on failure: if this line never appears, the
-    // page is running an older copy of this file and nothing below it ever ran.
-    dom['picker-status'].textContent = 'reading the directory…';
+  /**
+   * Asks the server to open the system file dialog.
+   *
+   * A folder browser rendered in the page was the obvious thing to build and the wrong
+   * thing to use: people already know their own file dialog, and it brings favourites,
+   * search and network volumes that this would have had to reimplement badly.
+   */
+  async function addFiles() {
+    dom['picker-add'].disabled = true;
+    dom['picker-status'].textContent = 'waiting for the file dialog…';
     try {
-      const response = await fetch(`/api/browse${query}`);
-      if (!response.ok) {
-        // Not every failure answers in JSON, and a listing that silently does not
-        // appear is the hardest kind of breakage to place.
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(detail.error || `the server answered ${response.status}`);
-      }
-      listing = await response.json();
-      dom['picker-status'].textContent = '';
-      renderListing();
+      const response = await fetch('/api/choose', { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `the server answered ${response.status}`);
+
+      for (const path of result.files || []) chosen.add(path);
+      dom['picker-status'].textContent = (result.ignored || []).length
+        ? `ignored, not a format this reads: ${result.ignored.join(', ')}`
+        : '';
+      renderChosen();
     } catch (error) {
-      listing = null;
-      dom['picker-status'].textContent = `cannot list that directory: ${error.message}`;
-      dom['picker-build'].disabled = true;
+      dom['picker-status'].textContent = String(error.message || error);
+    } finally {
+      dom['picker-add'].disabled = false;
     }
   }
 
-  function renderListing() {
-    dom['picker-here'].textContent = listing.path;
-    dom['picker-up'].disabled = !listing.parent;
-
-    dom['picker-roots'].innerHTML = '';
-    for (const root of listing.roots) {
-      const button = document.createElement('button');
-      button.textContent = root === '/Volumes' ? 'Volumes' : 'Home';
-      button.addEventListener('click', () => browse(root));
-      dom['picker-roots'].appendChild(button);
-    }
-
+  function renderChosen() {
+    const paths = [...chosen].sort();
     dom['picker-list'].innerHTML = '';
-    for (const folder of listing.folders) {
-      const row = document.createElement('div');
-      row.innerHTML = `<span>📁</span><span>${folder.name}</span>`;
-      row.addEventListener('click', () => browse(folder.path));
-      dom['picker-list'].appendChild(row);
+    if (!paths.length) {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = 'No files yet — use “Choose files…”.';
+      dom['picker-list'].appendChild(empty);
     }
-    for (const file of listing.files) {
-      const row = document.createElement('div');
-      const on = chosen.has(file.path);
-      row.className = on ? 'on' : '';
-      row.innerHTML = `<span>${on ? '☑' : '☐'}</span><span>${file.name}</span>`
-        + `<span class="size">${Picker.humanSize(file.size)}</span>`;
-      row.addEventListener('click', () => toggleFile(file));
-      dom['picker-list'].appendChild(row);
-    }
-    updateChosen();
-  }
-
-  /** Picking one GoPro chunk takes the rest of its recording along. */
-  function toggleFile(file) {
-    const group = Picker.sameRecording(file.name, listing.files);
-    const paths = listing.files
-      .filter((f) => group.includes(f.name))
-      .map((f) => f.path);
-    const turningOff = chosen.has(file.path);
     for (const path of paths) {
-      if (turningOff) chosen.delete(path);
-      else chosen.add(path);
+      const row = document.createElement('div');
+      const name = path.split('/').pop();
+      row.innerHTML = `<span>${Picker.isVideo(name) ? '🎬' : '📈'}</span>`
+        + `<span>${name}</span><span class="size">✕</span>`;
+      row.title = path;
+      row.addEventListener('click', () => { chosen.delete(path); renderChosen(); });
+      dom['picker-list'].appendChild(row);
     }
-    renderListing();
-  }
-
-  function updateChosen() {
-    const paths = [...chosen];
     dom['picker-chosen'].textContent = Picker.describe(paths);
     const blocked = Picker.missing(paths);
     dom['picker-build'].disabled = Boolean(blocked);
@@ -455,14 +429,14 @@
       })).json();
       if (started.error) throw new Error(started.error);
 
-      const job = await ExportUI.follow(started.id, (done) => {
+      await ExportUI.follow(started.id, (done) => {
         dom['picker-status'].textContent = `building… ${Math.round(done * 100)}%`;
       });
       dom['picker-status'].textContent = 'done, reloading';
-      if (job) window.location.reload();
+      window.location.reload();
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
-      updateChosen();
+      renderChosen();
     }
   }
 
@@ -625,6 +599,7 @@
     }
   }
 
+
   let saveTimer = null;
 
   function writeLayout() {
@@ -670,14 +645,14 @@
       dom.picker.hidden = false;
       // The stamp the page was served with, so a stale copy announces itself.
       const script = [...document.scripts].find((s) => s.src.includes('state.js'));
-      const stamp = script && script.src.includes('?v=')
-        ? script.src.split('?v=')[1] : 'unstamped';
-      dom['picker-build-id'].textContent = `build ${stamp}`;
-      browse('');
+      dom['picker-build-id'].textContent = script && script.src.includes('?v=')
+        ? `build ${script.src.split('?v=')[1]}` : 'build unstamped';
+      dom['picker-status'].textContent = '';
+      renderChosen();
     });
     dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
-    dom['picker-up'].addEventListener('click', () => listing && browse(listing.parent));
-    dom['picker-clear'].addEventListener('click', () => { chosen.clear(); renderListing(); });
+    dom['picker-add'].addEventListener('click', addFiles);
+    dom['picker-clear'].addEventListener('click', () => { chosen.clear(); renderChosen(); });
     dom['picker-build'].addEventListener('click', buildSession);
     dom.picker.addEventListener('click', (event) => {
       if (event.target === dom.picker) dom.picker.hidden = true;

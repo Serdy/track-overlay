@@ -28,24 +28,22 @@ from pathlib import Path
 WEB_ROOT = Path(__file__).resolve().parent.parent.parent / "web"
 CHUNK = 1 << 20                       # 1 MiB per socket write
 
-# What the file browser will show. Video the tool can read, and the telemetry exports.
-BROWSABLE = {".mp4", ".mov", ".lrv", ".csv", ".vbo"}
+# Opens the system file dialog. Run through System Events so the window comes to the
+# front rather than appearing behind whatever the person was looking at.
+CHOOSE_SCRIPT = """
+tell application "System Events"
+	activate
+	set chosen to choose file with prompt "Choose GoPro video and RaceBox exports" with multiple selections allowed
+end tell
+set out to ""
+repeat with f in chosen
+	set out to out & POSIX path of f & linefeed
+end repeat
+return out
+"""
 
-# Where it may look. The server listens on the loopback interface only, but there is no
-# reason for it to be able to list the whole filesystem either - footage lives in the
-# home directory or on the card, and nothing else needs to be reachable.
-def default_roots() -> list[Path]:
-    roots = [Path.home()]
-    volumes = Path("/Volumes")          # where a camera card mounts on macOS
-    if volumes.is_dir():
-        roots.append(volumes)
-    return roots
-
-
-def inside_roots(target: Path, roots: list[Path]) -> bool:
-    resolved = target.resolve()
-    return any(resolved == root or root in resolved.parents
-               for root in (r.resolve() for r in roots))
+# What the tool can read. Anything else picked in the dialog is ignored.
+READABLE = {".mp4", ".mov", ".csv", ".vbo"}
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
@@ -130,7 +128,6 @@ class Handler(BaseHTTPRequestHandler):
     session_path: Path
     layout_path: Path
     media: Media
-    roots: list[Path]
 
     def log_message(self, fmt, *args):      # quieter than the default logger
         pass
@@ -224,8 +221,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_media(path, query)
         if path.startswith("/api/output/"):
             return self._serve_output(path)
-        if path == "/api/browse":
-            return self._browse(query)
 
         # Editor statics. Canonicalise the path and make sure it stayed inside web/ —
         # otherwise ../ would lead out.
@@ -255,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reveal_output()
         if self.path == "/api/build":
             return self._start_build()
+        if self.path == "/api/choose":
+            return self._choose_files()
         if self.path.startswith("/api/render/") and self.path.endswith("/cancel"):
             job = JOBS.get(self.path.split("/")[3])
             if job is None:
@@ -304,40 +301,31 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _browse(self, query: str) -> None:
-        """Lists one directory, so the editor can pick source files without uploading them.
+    def _choose_files(self) -> None:
+        """Opens the system file dialog and returns what was picked.
 
-        Nothing is copied: the server already has the disk in front of it, and pushing
-        four gigabytes of footage through the browser to reach the same machine would be
-        pure waste.
+        A folder browser rendered in the page was the obvious thing to build and the
+        wrong thing to use: people already know their own file dialog, and it handles
+        favourites, search, and network volumes that this would have had to reimplement.
+
+        The request blocks until the dialog is answered, which is fine - it was opened by
+        a click a moment earlier, and nothing else is waiting on it.
         """
-        from urllib.parse import parse_qs, unquote
+        if sys.platform != "darwin":
+            return self._error(HTTPStatus.NOT_IMPLEMENTED,
+                               "the file dialog is wired up for macOS only; "
+                               "use the build command instead")
+        done = subprocess.run(["osascript", "-e", CHOOSE_SCRIPT],
+                              capture_output=True, text=True)
+        if done.returncode != 0 or "User canceled" in done.stderr:
+            # Cancelling is an ordinary outcome, not a failure.
+            return self._send(HTTPStatus.OK, b'{"files":[],"cancelled":true}',
+                              "application/json")
 
-        wanted = unquote((parse_qs(query).get("path") or [""])[0])
-        target = Path(wanted).expanduser() if wanted else self.roots[0]
-        if not inside_roots(target, self.roots):
-            return self._error(HTTPStatus.FORBIDDEN,
-                               "only the home directory and mounted volumes are browsable")
-        if not target.is_dir():
-            return self._error(HTTPStatus.NOT_FOUND, f"no such directory {target}")
-
-        folders, files = [], []
-        try:
-            for entry in sorted(target.iterdir(), key=lambda e: e.name.lower()):
-                if entry.name.startswith("."):
-                    continue
-                if entry.is_dir():
-                    folders.append({"name": entry.name, "path": str(entry)})
-                elif entry.suffix.lower() in BROWSABLE:
-                    files.append({"name": entry.name, "path": str(entry),
-                                  "size": entry.stat().st_size})
-        except PermissionError:
-            return self._error(HTTPStatus.FORBIDDEN, f"{target} is not readable")
-
-        parent = str(target.parent) if inside_roots(target.parent, self.roots) else None
-        payload = {"path": str(target), "parent": parent,
-                   "roots": [str(r) for r in self.roots],
-                   "folders": folders, "files": files}
+        files = [line for line in done.stdout.splitlines() if line.strip()]
+        usable = [f for f in files if Path(f).suffix.lower() in READABLE]
+        payload = {"files": usable,
+                   "ignored": [Path(f).name for f in files if f not in usable]}
         self._send(HTTPStatus.OK, json.dumps(payload).encode(),
                    "application/json; charset=utf-8")
 
@@ -354,9 +342,10 @@ class Handler(BaseHTTPRequestHandler):
         picked = [Path(p) for p in request.get("files", [])]
         if not picked:
             return self._error(HTTPStatus.BAD_REQUEST, "no files were chosen")
-        outside = [str(p) for p in picked if not inside_roots(p, self.roots)]
-        if outside:
-            return self._error(HTTPStatus.FORBIDDEN, f"outside the browsable roots: {outside}")
+        unusable = [str(p) for p in picked
+                    if p.suffix.lower() not in READABLE or not p.is_file()]
+        if unusable:
+            return self._error(HTTPStatus.BAD_REQUEST, f"cannot read: {unusable}")
 
         telemetry = [p for p in picked if p.suffix.lower() in (".csv", ".vbo")]
         videos = [p for p in picked if p.suffix.lower() in (".mp4", ".mov")]
@@ -505,13 +494,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(session_path: Path, *, layout_path: Path | None = None,
-                port: int = 8712, roots: list[Path] | None = None) -> ThreadingHTTPServer:
+                port: int = 8712) -> ThreadingHTTPServer:
     payload = json.loads(session_path.read_text(encoding="utf-8"))
     handler = type("BoundHandler", (Handler,), {
         "session_path": session_path,
         "layout_path": layout_path or session_path.with_name("layout.json"),
         "media": Media.from_session(payload),
-        "roots": roots or default_roots(),
     })
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 

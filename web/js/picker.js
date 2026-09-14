@@ -27,12 +27,6 @@ const Picker = (function () {
     return VIDEO.includes(extension(name));
   }
 
-  function humanSize(bytes) {
-    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
-    return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
-  }
-
   /**
    * What a chosen set is missing before a session can be built.
    *
@@ -57,27 +51,7 @@ const Picker = (function () {
     return parts.join(', ') || 'nothing chosen';
   }
 
-  /**
-   * Everything in a listing that belongs to the same GoPro recording as `name`.
-   *
-   * Picking one chunk almost always means wanting the rest: they are one recording split
-   * at four gigabytes, and a session assembled from the first chunk alone would simply
-   * stop partway through.
-   */
-  function sameRecording(name, files) {
-    const match = /^(GH|GX|GP)(\d{2})(\d{4})\./i.exec(name);
-    if (!match) return [name];
-    const recording = match[3];
-    return files
-      .map((f) => f.name)
-      .filter((other) => {
-        const m = /^(GH|GX|GP)(\d{2})(\d{4})\./i.exec(other);
-        return m && m[3] === recording;
-      });
-  }
-
-  return { TELEMETRY, VIDEO, extension, isTelemetry, isVideo, humanSize,
-           missing, describe, sameRecording };
+  return { TELEMETRY, VIDEO, extension, isTelemetry, isVideo, missing, describe };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {
