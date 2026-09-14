@@ -1,1 +1,43 @@
-<h1>track-overlay</h1>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>track-overlay</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <strong id="track-name">…</strong>
+    <span class="muted" id="session-info"></span>
+    <span class="spacer"></span>
+    <span class="muted" id="sync-info"></span>
+  </header>
+
+  <main id="stage">
+    <div id="slots"></div>
+    <canvas id="overlay"></canvas>
+    <div id="empty" class="empty">Видео не подключено — показываю только телеметрию</div>
+  </main>
+
+  <section class="readout" id="readout"></section>
+
+  <footer class="transport">
+    <button id="play" title="Пробел">▶</button>
+    <button id="prev-lap" title="Стрелка вверх">⏮</button>
+    <button id="next-lap" title="Стрелка вниз">⏭</button>
+    <button id="rate">1×</button>
+    <div class="timeline" id="timeline">
+      <div class="laps" id="lap-marks"></div>
+      <div class="playhead" id="playhead"></div>
+    </div>
+    <code id="clock-time">0:00.000</code>
+    <code id="lap-label" class="muted">—</code>
+  </footer>
+
+  <script src="js/session.js"></script>
+  <script src="js/clock.js"></script>
+  <script src="js/state.js"></script>
+</body>
+</html>

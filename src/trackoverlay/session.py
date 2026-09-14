@@ -120,6 +120,9 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
         out.append({
             "id": f"cam_{clip.id}",
             "files": [str(p) for p in clip.files],
+            # Длительность каждого чанка: браузер играет их по одному тегу <video> и
+            # должен знать, где кончается один файл и начинается следующий.
+            "chunks": [round(c.duration_s, 3) for c in clip.chunks],
             "proxy": [str(p) for p in proxies] if proxies else None,
             "offset_s": round(result.offset_s, 3),
             "duration_s": round(clip.duration_s, 3),

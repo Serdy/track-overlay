@@ -30,6 +30,12 @@ ffmpeg 7+, Python 3.12 (через `uv`), современный браузер 
 ## Команды
 
 ```bash
-uv sync                                          # установка
-uv run pytest                                    # тесты
+uv sync                                                        # установка
+uv run pytest && node --test web/test/*.test.js                # тесты
+
+uv run trackoverlay build data/*.csv data/*.vbo data/GH*.MP4 -o out/session.json
+uv run trackoverlay serve out/session.json                     # редактор в браузере
 ```
+
+Тесты JS запускаются глобом, а не каталогом: `node --test web/test/` node 26
+пытается загрузить как модуль.

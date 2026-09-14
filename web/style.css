@@ -1,0 +1,132 @@
+:root {
+  --bg: #101216;
+  --panel: #181b21;
+  --line: #272b33;
+  --text: #e6e8ec;
+  --muted: #8b919c;
+  --accent: #e2483d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+
+#stage {
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+/* Слоты и оверлей лежат друг на друге: позиции внутри задаются в долях кадра,
+   поэтому при любом размере окна раскладка остаётся той же, что уйдёт в рендер. */
+#slots, #overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#overlay { pointer-events: none; }
+
+#slots video {
+  position: absolute;
+  object-fit: cover;
+  background: #000;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.readout {
+  display: flex;
+  gap: 18px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-variant-numeric: tabular-nums;
+}
+
+.readout .cell { display: flex; gap: 6px; align-items: baseline; }
+.readout .cell b { font-size: 18px; }
+.readout .cell span { color: var(--muted); font-size: 12px; }
+
+.transport {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.transport button {
+  min-width: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.transport button:hover { border-color: var(--muted); }
+
+.timeline {
+  position: relative;
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0c0e12;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.laps { position: absolute; inset: 0; }
+
+.laps i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.laps i.best { background: var(--accent); }
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+code { font-variant-numeric: tabular-nums; }
