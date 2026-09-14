@@ -17,13 +17,24 @@
  *
  * The matte is built with canvas compositing rather than a pixel loop. Reading two
  * million pixels per frame in JavaScript would take longer than everything else combined.
+ *
+ * **On the codec.** H.264 comes first, and not for compatibility — for the hardware
+ * encoder. Apple Silicon has no hardware VP9 encoder, so libvpx runs in software across
+ * several cores: measured at 380-430% CPU against 50-95% for hardware H.264, for the same
+ * throughput. H.264 has to be asked for at level 5.1 or above, because the doubled frame
+ * height exceeds what level 4.0 allows and the browser then reports no support at all
+ * rather than falling back.
  */
 const OverlayExport = (function () {
 
   const QUEUE_LIMIT = 12;          // frames allowed in flight before we wait
+
+  // Tried in order. Hardware first: the work then leaves the CPU almost entirely.
   const CANDIDATES = [
-    { codec: 'vp09.00.10.08', muxer: 'V_VP9' },
-    { codec: 'vp8', muxer: 'V_VP8' },
+    { codec: 'avc1.640033', container: 'mp4', track: 'avc', hardware: true },
+    { codec: 'avc1.640033', container: 'mp4', track: 'avc' },
+    { codec: 'vp09.00.10.08', container: 'webm', track: 'V_VP9' },
+    { codec: 'vp8', container: 'webm', track: 'V_VP8' },
   ];
 
   function supported() {
@@ -39,6 +50,7 @@ const OverlayExport = (function () {
         codec: candidate.codec, width, height, framerate: fps,
         bitrate: Math.round(width * height * fps * 0.02),
       };
+      if (candidate.hardware) config.hardwareAcceleration = 'prefer-hardware';
       try {
         const probe = await VideoEncoder.isConfigSupported(config);
         if (probe.supported) return { ...candidate, config };
@@ -46,7 +58,24 @@ const OverlayExport = (function () {
         // An unknown codec string throws rather than reporting unsupported.
       }
     }
-    throw new Error('this browser cannot encode VP9 or VP8');
+    throw new Error('this browser cannot encode H.264, VP9 or VP8');
+  }
+
+  /** A muxer for the chosen container, with the same interface either way. */
+  function makeMuxer(chosen, width, height, fps) {
+    if (chosen.container === 'mp4') {
+      return new Mp4Muxer.Muxer({
+        target: new Mp4Muxer.ArrayBufferTarget(),
+        video: { codec: chosen.track, width, height, frameRate: fps },
+        // The whole file is assembled in memory, so the index can go at the front —
+        // ffmpeg then reads it without seeking to the end.
+        fastStart: 'in-memory',
+      });
+    }
+    return new WebMMuxer.Muxer({
+      target: new WebMMuxer.ArrayBufferTarget(),
+      video: { codec: chosen.track, width, height, frameRate: fps },
+    });
   }
 
   /** Waits until the encoder has drained enough to take more work. */
@@ -94,10 +123,7 @@ const OverlayExport = (function () {
     const stacked = new OffscreenCanvas(width, height * 2);
     const layerCtx = layer.getContext('2d', { alpha: true });
 
-    const muxer = new WebMMuxer.Muxer({
-      target: new WebMMuxer.ArrayBufferTarget(),
-      video: { codec: chosen.muxer, width, height: height * 2, frameRate: fps },
-    });
+    const muxer = makeMuxer(chosen, width, height * 2, fps);
 
     let failure = null;
     const encoder = new VideoEncoder({
@@ -135,10 +161,12 @@ const OverlayExport = (function () {
     if (failure) throw failure;
     muxer.finalize();
     if (onProgress) onProgress(1);
-    return new Blob([muxer.target.buffer], { type: 'video/webm' });
+    return new Blob([muxer.target.buffer], {
+      type: chosen.container === 'mp4' ? 'video/mp4' : 'video/webm',
+    });
   }
 
-  return { QUEUE_LIMIT, CANDIDATES, supported, pickCodec, stack, render };
+  return { QUEUE_LIMIT, CANDIDATES, supported, pickCodec, makeMuxer, stack, render };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

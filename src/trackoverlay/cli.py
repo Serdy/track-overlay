@@ -50,6 +50,9 @@ def _render(args: argparse.Namespace) -> int:
     session = json.loads(args.session.read_text(encoding="utf-8"))
     layout = json.loads(args.layout.read_text(encoding="utf-8"))
     overlay = args.overlay if args.overlay and args.overlay.exists() else None
+    if overlay is None:
+        # The editor writes whichever container the browser managed to encode.
+        overlay = next((p for p in sorted(args.session.parent.glob("overlay.*"))), None)
 
     prepared = render_module.prepare_clips(session, args.output.parent / "work")
     plan = render_module.build_plan(prepared, layout, overlay, args.output,

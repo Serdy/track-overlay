@@ -163,3 +163,26 @@ def test_unknown_post_route(live):
     with pytest.raises(urllib.error.HTTPError) as err:
         urllib.request.urlopen(request)
     assert err.value.code == 404
+
+
+def test_overlay_upload_names_the_file_by_its_type(live):
+    """The container depends on which codec the browser could encode."""
+    base, folder = live
+    for content_type, expected in (("video/mp4", "overlay.mp4"),
+                                   ("video/webm", "overlay.webm")):
+        request = urllib.request.Request(
+            base + "/api/overlay", data=b"not really video",
+            headers={"Content-Type": content_type}, method="POST")
+        json.load(urllib.request.urlopen(request))
+        assert (folder / expected).exists()
+        # Only one overlay may survive, or the render would pick up a stale one.
+        assert len(list(folder.glob("overlay.*"))) == 1
+
+
+def test_empty_overlay_is_rejected(live):
+    base, _ = live
+    request = urllib.request.Request(base + "/api/overlay", data=b"",
+                                     headers={"Content-Type": "video/mp4"}, method="POST")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        urllib.request.urlopen(request)
+    assert err.value.code == 400

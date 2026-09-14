@@ -5,33 +5,65 @@ const OverlayExport = require('../js/export_overlay.js');
 const ExportUI = require('../js/export_ui.js');
 
 /** Stands in for VideoEncoder.isConfigSupported with a fixed answer per codec. */
-function stubEncoder(accepted) {
+function stubEncoder(accepted, options = {}) {
   global.VideoEncoder = {
     isConfigSupported: async (config) => {
       if (config.codec === 'throws') throw new Error('unknown codec');
-      return { supported: accepted.includes(config.codec), config };
+      const known = accepted.includes(config.codec);
+      // A browser without a hardware encoder reports no support for that request
+      // specifically, rather than quietly handing back a software one.
+      if (config.hardwareAcceleration === 'prefer-hardware' && options.hardwareOnly === false) {
+        return { supported: false, config };
+      }
+      return { supported: known, config };
     },
   };
 }
 
-test('the first codec the browser accepts is chosen', async () => {
+test('hardware H.264 is preferred over everything else', async () => {
+  // Apple Silicon has no hardware VP9 encoder, so libvpx runs across several cores:
+  // 380-430% CPU against 50-95% for hardware H.264, at the same throughput.
+  stubEncoder(['avc1.640033', 'vp09.00.10.08', 'vp8']);
+  const picked = await OverlayExport.pickCodec(1920, 2160, 60);
+  assert.strictEqual(picked.codec, 'avc1.640033');
+  assert.strictEqual(picked.container, 'mp4');
+  assert.strictEqual(picked.config.hardwareAcceleration, 'prefer-hardware');
+});
+
+test('without a hardware encoder H.264 is still tried in software', async () => {
+  stubEncoder(['avc1.640033'], { hardwareOnly: false });
+  const picked = await OverlayExport.pickCodec(1920, 2160, 60);
+  assert.strictEqual(picked.codec, 'avc1.640033');
+});
+
+test('with no H.264 at all it falls through to VP9', async () => {
   stubEncoder(['vp09.00.10.08', 'vp8']);
   const picked = await OverlayExport.pickCodec(1920, 2160, 60);
   assert.strictEqual(picked.codec, 'vp09.00.10.08');
-  assert.strictEqual(picked.muxer, 'V_VP9');
+  assert.strictEqual(picked.container, 'webm');
+  assert.strictEqual(picked.track, 'V_VP9');
 });
 
-test('an unsupported codec falls through to the next', async () => {
+test('and then to VP8', async () => {
   stubEncoder(['vp8']);
   const picked = await OverlayExport.pickCodec(1920, 2160, 60);
-  assert.strictEqual(picked.codec, 'vp8');
-  assert.strictEqual(picked.muxer, 'V_VP8');
+  assert.strictEqual(picked.track, 'V_VP8');
 });
 
 test('no usable codec is an explicit failure, not a silent one', async () => {
   stubEncoder([]);
   await assert.rejects(() => OverlayExport.pickCodec(1920, 2160, 60),
-                       /cannot encode VP9 or VP8/);
+                       /cannot encode H.264, VP9 or VP8/);
+});
+
+test('H.264 is asked for at level 5.1 or above', () => {
+  // The doubled frame height exceeds what level 4.0 allows, and the browser then reports
+  // no support at all rather than falling back to a higher level.
+  for (const candidate of OverlayExport.CANDIDATES) {
+    if (!candidate.codec.startsWith('avc1')) continue;
+    const level = parseInt(candidate.codec.slice(-2), 16);
+    assert.ok(level >= 0x33, `${candidate.codec} is below level 5.1`);
+  }
 });
 
 test('the chosen config carries the doubled height', async () => {

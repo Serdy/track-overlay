@@ -250,3 +250,26 @@ def test_the_output_duration_drives_the_length_limit(tmp_path):
     limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
     assert limits[0] == "300.000"
     assert limits[-1] == "60.000"
+
+
+def test_the_overlay_is_laid_on_after_the_trimming(tmp_path):
+    """The browser renders the layer against output time, not session time.
+
+    Laying it on before the cuts would apply the range offset a second time and slide
+    the telemetry away from the picture.
+    """
+    overlay = tmp_path / "overlay.mp4"
+    overlay.touch()
+    layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
+    graph = graph_of(build_plan(SESSION, layout, overlay, tmp_path / "out.mp4"))
+    steps = graph.split(";")
+    concat = next(i for i, s in enumerate(steps) if "concat=" in s)
+    merge = next(i for i, s in enumerate(steps) if "alphamerge" in s)
+    assert merge > concat, "the overlay must come after the trimming"
+
+
+def test_without_trimming_the_overlay_is_still_last(tmp_path):
+    overlay = tmp_path / "overlay.mp4"
+    overlay.touch()
+    graph = graph_of(build_plan(SESSION, LAYOUT, overlay, tmp_path / "out.mp4"))
+    assert graph.split(";")[-1].endswith("[out]")

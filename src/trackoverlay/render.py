@@ -171,16 +171,6 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
             f"enable='between(t,{span['from']:.3f},{span['to']:.3f})'[{nxt}]")
         label = f"[{nxt}]"
 
-    if overlay_index is not None:
-        # The layer arrives as a double-height frame: colour on top, a greyscale matte of
-        # the alpha channel below. No browser tested would encode real transparency, so
-        # the two halves travel together in one file and are put back together here.
-        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:0,setsar=1[ovc]")
-        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:{height},setsar=1[ovm]")
-        steps.append("[ovc][ovm]alphamerge[ov]")
-        steps.append(f"{label}[ov]overlay=0:0[out]")
-        label = "[out]"
-
     # Audio comes whole from the camera that opens the session — no mixing in v1.
     opening = spans[0]["clip"]
     audio_label = f"[{index[opening]}:a]"
@@ -208,6 +198,19 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
             pieces.append(f"[kv{n}][ka{n}]")
         steps.append(f"{''.join(pieces)}concat=n={len(kept)}:v=1:a=1[cv][ca]")
         label, audio_map = "[cv]", "[ca]"
+
+    # The overlay goes on last, after the trimming, because the browser already rendered
+    # it against output time. Laying it on before the cuts would apply the range offset a
+    # second time and slide the telemetry away from the picture.
+    if overlay_index is not None:
+        # The layer arrives as a double-height frame: colour on top, a greyscale matte of
+        # the alpha channel below. No browser tested would encode real transparency, so
+        # the two halves travel together in one file and are put back together here.
+        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:0,setsar=1[ovc]")
+        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:{height},setsar=1[ovm]")
+        steps.append("[ovc][ovm]alphamerge[ov]")
+        steps.append(f"{label}[ov]overlay=0:0[out]")
+        label = "[out]"
 
     args += ["-filter_complex", ";".join(steps), "-map", label, "-map", audio_map]
     args += ["-c:a", AUDIO_CODEC, "-b:a", "192k"]

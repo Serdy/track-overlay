@@ -175,6 +175,12 @@ off. So the overlay is written as a frame of double height, colour on top and a 
 matte below, and ffmpeg puts them back together with `alphamerge`. One encode and one
 file, so the halves cannot drift apart.
 
+The codec matters more than it looks. Apple Silicon has no hardware VP9 encoder, so
+libvpx runs in software across several cores — 380-430% CPU against 50-95% for hardware
+H.264, at the same throughput. H.264 has to be asked for at level 5.1 or above, because
+the doubled frame height exceeds what level 4.0 allows and the browser then reports no
+support at all rather than quietly picking a higher level.
+
 ## Tests
 
 ```bash

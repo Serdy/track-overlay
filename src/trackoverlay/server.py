@@ -152,6 +152,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", media_type)
         self.send_header("Accept-Ranges", "bytes")
+        # The editor is served straight off the working tree, so a cached copy means
+        # editing a file and reloading quietly changes nothing. Video is exempt: those
+        # files are large, immutable during a session, and re-fetching them on every
+        # scrub would be painful.
+        if path.suffix.lower() not in (".mp4", ".lrv", ".mov"):
+            self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(end - start + 1))
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -244,7 +250,12 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return self._error(HTTPStatus.BAD_REQUEST, "the overlay is empty")
-        target = self.session_path.parent / "overlay.webm"
+        # The container depends on which codec the browser could encode: H.264 goes in
+        # MP4, VP9 and VP8 in WebM. ffmpeg reads either, so the extension just follows.
+        suffix = ".mp4" if "mp4" in (self.headers.get("Content-Type") or "") else ".webm"
+        for stale in self.session_path.parent.glob("overlay.*"):
+            stale.unlink(missing_ok=True)
+        target = self.session_path.parent / f"overlay{suffix}"
         remaining = length
         with target.open("wb") as handle:
             while remaining > 0:
@@ -273,7 +284,9 @@ class Handler(BaseHTTPRequestHandler):
         layout = json.loads(self.layout_path.read_text(encoding="utf-8"))
 
         out_dir = self.session_path.parent
-        overlay = out_dir / "overlay.webm"
+        # The container follows whichever codec the browser managed to encode, so the
+        # extension is not known here - take whatever the upload left behind.
+        overlay = next(iter(sorted(out_dir.glob("overlay.*"))), None)
         output = out_dir / (request.get("name") or "final.mp4")
 
         job = Job(uuid.uuid4().hex[:12])
@@ -283,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 prepared = render_module.prepare_clips(session, out_dir / "work")
                 plan = render_module.build_plan(
-                    prepared, layout, overlay if overlay.exists() else None, output,
+                    prepared, layout, overlay, output,
                     duration_s=request.get("duration"))
 
                 def tick(done: float) -> None:

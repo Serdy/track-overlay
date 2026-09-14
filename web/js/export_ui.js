@@ -64,7 +64,7 @@ const ExportUI = (function () {
     });
 
     onStage(`uploading the layer (${(blob.size / 1e6).toFixed(1)} MB)`);
-    await post('/api/overlay', blob, 'video/webm');
+    await post('/api/overlay', blob, blob.type);
 
     onStage('composing with ffmpeg');
     const job = await post('/api/render', JSON.stringify({ duration: to, name }),
