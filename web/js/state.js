@@ -20,6 +20,7 @@
       { type: 'speed', pos: [0.030, 0.845], scale: 1 },
       { type: 'lean',  pos: [0.030, 0.725], scale: 1 },
       { type: 'accel', pos: [0.820, 0.845], scale: 1 },
+      { type: 'map',   pos: [0.820, 0.500], scale: 1 },
     ],
   };
 
@@ -162,6 +163,37 @@
     if (clock) render(clock.time);
   }
 
+  // Геометрия карты статична, поэтому считается один раз и пересчитывается только
+  // при смене размера холста или раскладки.
+  let mapPrepared = null;
+  let mapKey = '';
+
+  function prepareMap(frame) {
+    const placement = layout.widgets.find((w) => w.type === 'map');
+    if (!placement) return null;
+    const widget = Widgets.get('map');
+    const box = Widgets.boxFor(widget, placement, frame);
+    const key = `${frame.width}x${frame.height}:${placement.pos.join(',')}:${placement.scale}`;
+    if (key !== mapKey) {
+      mapKey = key;
+      mapPrepared = widget.prepare(session, box);
+    }
+    return mapPrepared;
+  }
+
+  /** След за точкой: последние несколько секунд трека. */
+  function trailFor(time) {
+    const widget = Widgets.get('map');
+    const step = 1 / 5;                       // пяти точек в секунду хватает
+    const points = [];
+    for (let t = Math.max(0, time - widget.TRAIL_S); t <= time; t += step) {
+      const lat = SessionModel.sampleAt(session, 'lat', t);
+      const lon = SessionModel.sampleAt(session, 'lon', t);
+      if (lat !== null && lon !== null) points.push([lat, lon]);
+    }
+    return points;
+  }
+
   function drawOverlay(time) {
     const canvas = dom.overlay;
     const ctx = canvas.getContext('2d');
@@ -169,12 +201,14 @@
     if (!layout) return;
 
     const score = Scoring.scoreAt(scores, session, time);
-    const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel'], time);
+    const frame = { width: canvas.width, height: canvas.height };
+    const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel', 'lat', 'lon'], time);
     data.score = score;
     data.scoreColor = SR_TRACK.scoreToColor(score, SR_TRACK.DEFAULT_CFG);
+    data.map = prepareMap(frame);
+    data.trail = trailFor(time);
 
-    Widgets.drawAll(ctx, layout.widgets,
-                    { width: canvas.width, height: canvas.height }, data);
+    Widgets.drawAll(ctx, layout.widgets, frame, data);
   }
 
   let lastFrame = 0;
