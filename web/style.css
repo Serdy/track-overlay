@@ -103,6 +103,12 @@ body {
 
 .transport button:hover { border-color: var(--muted); }
 
+.transport button:disabled {
+  opacity: 0.35;
+  cursor: default;
+  border-color: var(--line);
+}
+
 .timeline {
   position: relative;
   flex: 1;

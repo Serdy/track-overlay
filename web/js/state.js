@@ -41,7 +41,7 @@
     for (const id of ['track-name', 'session-info', 'sync-info', 'slots', 'overlay',
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
-                      'swap', 'segment', 'cut-marks', 'pending-range']) {
+                      'swap', 'segment', 'reset', 'cut-marks', 'pending-range']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -180,6 +180,7 @@
 
   function renderCutMarks() {
     dom['cut-marks'].innerHTML = '';
+    dom.reset.disabled = layout.cuts.length <= 1;
     for (const cut of layout.cuts) {
       if (cut.t <= 0) continue;                  // the opening entry is not a change
       const mark = document.createElement('i');
@@ -194,6 +195,23 @@
       });
       dom['cut-marks'].appendChild(mark);
     }
+  }
+
+  /**
+   * Throws away every camera switch and returns to the opening arrangement.
+   *
+   * Widget placement is deliberately left alone: a person reaching for reset wants the
+   * cutting undone, not the overlay they spent time positioning.
+   */
+  function resetCuts() {
+    if (layout.cuts.length <= 1) return;
+    if (!window.confirm(`Discard ${layout.cuts.length - 1} camera switch(es)?`)) return;
+    layout.cuts = Cuts.initial(session.clips.map((clip) => clip.id));
+    segmentStart = null;
+    dom.segment.classList.remove('armed');
+    renderCutMarks();
+    saveLayout();
+    render(clock.time);
   }
 
   function swapFromPlayhead() {
@@ -253,6 +271,7 @@
     dom.rate.addEventListener('click', () => Clock.cycleRate(clock, +1));
     dom.swap.addEventListener('click', swapFromPlayhead);
     dom.segment.addEventListener('click', toggleSegment);
+    dom.reset.addEventListener('click', resetCuts);
 
     dom.timeline.addEventListener('pointerdown', (event) => {
       const scrub = (e) => {

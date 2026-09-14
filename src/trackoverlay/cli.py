@@ -6,6 +6,9 @@ import argparse
 import sys
 from pathlib import Path
 
+import json
+
+from . import render as render_module
 from .server import serve
 from .session import SessionError, build_session
 
@@ -38,6 +41,34 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render(args: argparse.Namespace) -> int:
+    if not args.session.exists():
+        raise SessionError(f"no such file {args.session} — run build first")
+    if not args.layout.exists():
+        raise SessionError(f"no such file {args.layout} — arrange the layout in the editor first")
+
+    session = json.loads(args.session.read_text(encoding="utf-8"))
+    layout = json.loads(args.layout.read_text(encoding="utf-8"))
+    overlay = args.overlay if args.overlay and args.overlay.exists() else None
+
+    prepared = render_module.prepare_clips(session, args.output.parent / "work")
+    plan = render_module.build_plan(prepared, layout, overlay, args.output,
+                                    duration_s=args.duration)
+    print(f"rendering {plan.duration_s / 60:.1f} min from {len(plan.inputs)} input(s)"
+          + ("" if overlay else ", no overlay layer"))
+
+    last = -1.0
+    def tick(done: float) -> None:
+        nonlocal last
+        if done - last >= 0.02 or done >= 1.0:
+            last = done
+            print(f"\r  {done * 100:5.1f}%", end="", flush=True)
+
+    render_module.run(plan, on_progress=tick)
+    print(f"\rwritten: {args.output}   ({args.output.stat().st_size / 1e6:.0f} MB)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="trackoverlay",
@@ -57,10 +88,20 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--no-browser", action="store_true")
     run.set_defaults(func=_serve)
 
+    out = sub.add_parser("render", help="compose the finished video with ffmpeg")
+    out.add_argument("session", type=Path, nargs="?", default=Path("out/session.json"))
+    out.add_argument("layout", type=Path, nargs="?", default=Path("out/layout.json"))
+    out.add_argument("--overlay", type=Path, default=Path("out/overlay.webm"),
+                     help="the telemetry layer exported from the editor")
+    out.add_argument("-o", "--output", type=Path, default=Path("out/final.mp4"))
+    out.add_argument("--duration", type=float, default=None,
+                     help="render only the first N seconds, for a quick check")
+    out.set_defaults(func=_render)
+
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except SessionError as err:
+    except (SessionError, render_module.RenderError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2
 
