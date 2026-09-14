@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Показывает реальное время съёмки GoPro и чинит даты файлов.
+"""Shows the real GoPro recording time and repairs file dates.
 
-Часы GoPro сбиваются, и тогда файлы получают бессмысленную дату (у нас это был
-25.01.2016). Спутниковое время внутри потока GPMF от этого не страдает, так что дату
-всегда можно восстановить из самого файла.
+The GoPro clock drifts, and files then carry a meaningless date (ours read 25.01.2016).
+Satellite time inside the GPMF stream does not suffer from that, so the date can always
+be recovered from the file itself.
 
-    uv run python tools/gopro_dates.py data/*.MP4            # только показать
-    uv run python tools/gopro_dates.py --apply data/*.MP4    # ещё и проставить
+    uv run python tools/gopro_dates.py data/*.MP4            # show only
+    uv run python tools/gopro_dates.py --apply data/*.MP4    # also write the dates
 """
 
 import argparse
@@ -23,7 +23,7 @@ TZ = zoneinfo.ZoneInfo("Europe/Warsaw")
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="+", type=Path)
-    ap.add_argument("--apply", action="store_true", help="проставить даты файлам")
+    ap.add_argument("--apply", action="store_true", help="write the dates onto the files")
     args = ap.parse_args()
 
     for path in sorted(args.files):
@@ -37,9 +37,9 @@ def main() -> None:
 
         local = dt.datetime.fromtimestamp(window.start_utc, TZ)
         where = (f"{samples[0].lat:.5f},{samples[0].lon:.5f}" if samples
-                 else "фикса нет ни в одном блоке")
+                 else "no fix in any block")
         print(f"{path.name}  {local:%d.%m.%Y %H:%M:%S} {local:%Z}  "
-              f"{window.duration_s/60:5.1f}мин  "
+              f"{window.duration_s/60:5.1f}min  "
               f"fix {window.fixed_blocks}/{window.blocks}  {where}")
 
         if args.apply:

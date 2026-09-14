@@ -9,34 +9,34 @@ DATA = ROOT / "data"
 
 
 def utc(text: str) -> float:
-    """ISO-строка → секунды эпохи, для читаемых ожиданий в тестах."""
+    """ISO string to epoch seconds, so expectations in tests stay readable."""
     return dt.datetime.fromisoformat(text).timestamp()
 
 
 @pytest.fixture(scope="session")
 def gpmd_head() -> bytes:
-    """Первые 30 секундных блоков GPMF из сессии 3429."""
+    """The first 30 one-second GPMF blocks from session 3429."""
     return (FIXTURES / "gpmd_3429_ch1_head.bin").read_bytes()
 
 
 def require_data(*names: str) -> list[Path]:
-    """Пропускает тест, если исходное видео не выложено (оно не в репозитории)."""
+    """Skips the test when the source video is absent (it is not in the repository)."""
     paths = [DATA / n for n in names]
     missing = [p.name for p in paths if not p.exists()]
     if missing:
-        pytest.skip(f"нет исходных файлов: {', '.join(missing)}")
+        pytest.skip(f"missing source files: {', '.join(missing)}")
     return paths
 
 
 @pytest.fixture(scope="session")
 def rb_lean() -> Path:
-    """Выгрузка RaceBox с Bike Mode: есть LeanAngle, нет бокового G."""
+    """A RaceBox export with Bike Mode: has LeanAngle, no lateral G."""
     return FIXTURES / "racebox_lean_head.csv"
 
 
 @pytest.fixture(scope="session")
 def rb_cornering() -> Path:
-    """Та же сессия без Bike Mode: есть GForceY, нет угла наклона."""
+    """The same session without Bike Mode: has GForceY, no lean angle."""
     return FIXTURES / "racebox_cornering_head.csv"
 
 

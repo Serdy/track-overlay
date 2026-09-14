@@ -1,21 +1,21 @@
-"""Чтение телеметрии GoPro из потока GPMF, вшитого в MP4.
+"""Reading GoPro telemetry from the GPMF stream embedded in the MP4.
 
-GoPro пишет телеметрию отдельным потоком данных с тегом ``gpmd``. Внутри — формат
-GPMF: дерево записей KLV (ключ, тип, длина, значение), где ключ это четырёхбуквенный
-код, а контейнеры отличаются нулевым типом.
+GoPro writes telemetry as a separate data stream tagged ``gpmd``. Inside it is the GPMF
+format: a tree of KLV records (key, length, value) where the key is a four-character
+code and containers are marked by a zero type.
 
-Нас интересуют три записи внутри каждого потока ``STRM``:
+Three records inside every ``STRM`` stream matter here:
 
 ``GPSU``
-    Метка UTC со спутников, ASCII вида ``ггммддччммсс.ссс``. Приходит раз в секунду и
-    не зависит от часов камеры — поэтому переживает сбитый RTC, который у GoPro не
-    редкость.
+    A UTC stamp from the satellites, ASCII shaped ``yymmddhhmmss.sss``. It arrives once
+    a second and does not depend on the camera clock — which is why it survives a reset
+    RTC, something GoPro cameras do often enough.
 ``GPS5``
-    Пачка координат: широта, долгота, высота, скорость 2D, скорость 3D. Целые числа,
-    делятся на множители из ``SCAL``.
+    A batch of fixes: latitude, longitude, altitude, 2D speed, 3D speed. Integers,
+    divided by the multipliers from ``SCAL``.
 ``GPSF``
-    Тип фикса: 0 — спутников нет, 2 — 2D, 3 — 3D. Блоки без фикса содержат мусор
-    в координатах и должны отбрасываться.
+    Fix type: 0 means no satellites, 2 is 2D, 3 is 3D. Blocks without a fix carry
+    garbage coordinates and have to be dropped.
 """
 
 from __future__ import annotations
@@ -27,23 +27,23 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# Коды типов GPMF → коды формата struct.
+# GPMF type codes mapped to struct format codes.
 _TYPES = {
     'b': 'b', 'B': 'B', 's': 'h', 'S': 'H',
     'l': 'i', 'L': 'I', 'f': 'f', 'd': 'd',
 }
 
-_HEADER = 8          # четыре байта ключа + тип + размер структуры + два байта повтора
-_FALLBACK_STEP = 1.0  # длительность последнего блока, когда следующего нет
+_HEADER = 8           # four key bytes, type, structure size, two repeat bytes
+_FALLBACK_STEP = 1.0  # duration of the final block when there is no next one
 
 
 class GpmfError(Exception):
-    """Поток gpmd отсутствует или не разбирается."""
+    """The gpmd stream is missing or does not parse."""
 
 
 @dataclass(frozen=True)
 class GpsSample:
-    t_utc: float      # секунды эпохи
+    t_utc: float      # seconds since the epoch
     lat: float
     lon: float
     alt_m: float
@@ -53,7 +53,7 @@ class GpsSample:
 
 @dataclass(frozen=True)
 class Window:
-    """Окно записи по спутниковому времени."""
+    """The recording window in satellite time."""
     start_utc: float
     end_utc: float
     blocks: int
@@ -65,7 +65,7 @@ class Window:
 
 
 def find_gpmd_stream(mp4: Path) -> int:
-    """Индекс потока ``gpmd`` внутри контейнера."""
+    """Index of the ``gpmd`` stream inside the container."""
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "d",
          "-show_entries", "stream=index,codec_tag_string",
@@ -75,14 +75,14 @@ def find_gpmd_stream(mp4: Path) -> int:
         parts = line.split(",")
         if len(parts) >= 2 and parts[1] == "gpmd":
             return int(parts[0])
-    raise GpmfError(f"{mp4.name}: поток gpmd не найден — GPS в камере был выключен?")
+    raise GpmfError(f"{mp4.name}: no gpmd stream — was GPS switched off on the camera?")
 
 
 def extract_gpmd(mp4: Path) -> bytes:
-    """Сырой поток GPMF.
+    """The raw GPMF stream.
 
-    ffmpeg достаёт его по индексу и не читает файл целиком, поэтому операция стоит
-    доли секунды даже на четырёхгигабайтном ролике.
+    ffmpeg pulls it out by index without reading the whole file, so this costs a
+    fraction of a second even on a four-gigabyte clip.
     """
     idx = find_gpmd_stream(mp4)
     with tempfile.TemporaryDirectory() as tmp:
@@ -94,10 +94,10 @@ def extract_gpmd(mp4: Path) -> bytes:
 
 
 def parse_streams(buf: bytes) -> list[dict]:
-    """Разбирает дерево KLV и возвращает по словарю на каждый контейнер ``STRM``.
+    """Walks the KLV tree and returns one dict per ``STRM`` container.
 
-    Значения складываются как есть, разбор в числа — отдельным шагом, потому что для
-    большинства ключей он не нужен.
+    Values are stored as-is; turning them into numbers is a separate step, because for
+    most keys it is never needed.
     """
     streams: list[dict] = []
 
@@ -109,26 +109,26 @@ def parse_streams(buf: bytes) -> list[dict]:
             payload_len = size * count
             body = off + _HEADER
             if body + payload_len > end:
-                return                       # обрезанный буфер: дальше идти нечем
-            if typ == 0:                     # вложенный контейнер
+                return                       # truncated buffer: nothing left to walk
+            if typ == 0:                     # nested container
                 inner = {} if key == 'STRM' else scope
                 walk(body, body + payload_len, inner)
                 if key == 'STRM' and inner:
                     streams.append(inner)
             elif scope is not None:
                 scope.setdefault(key, (chr(typ), size, count, buf[body:body + payload_len]))
-            off = body + payload_len + (-payload_len % 4)   # выравнивание на 4 байта
+            off = body + payload_len + (-payload_len % 4)   # pad to a 4-byte boundary
 
     walk(0, len(buf), None)
     return streams
 
 
 def _numbers(entry: tuple[str, int, int, bytes]) -> list[tuple]:
-    """Значение KLV как список кортежей чисел."""
+    """A KLV value as a list of number tuples."""
     typ, size, count, payload = entry
     fmt = _TYPES.get(typ)
     if fmt is None:
-        raise GpmfError(f"нечисловой тип GPMF: {typ!r}")
+        raise GpmfError(f"non-numeric GPMF type: {typ!r}")
     per = size // struct.calcsize(fmt)
     return [struct.unpack_from('>' + fmt * per, payload, i * size) for i in range(count)]
 
@@ -136,7 +136,7 @@ def _numbers(entry: tuple[str, int, int, bytes]) -> list[tuple]:
 def _gpsu_to_epoch(payload: bytes) -> float:
     text = payload.decode('latin1').strip('\x00').strip()
     if len(text) < 12:
-        raise GpmfError(f"метка GPSU слишком коротка: {text!r}")
+        raise GpmfError(f"GPSU stamp too short: {text!r}")
     stamp = _dt.datetime.strptime(text[:12], "%y%m%d%H%M%S")
     fraction = float(text[12:] or 0)
     return stamp.replace(tzinfo=_dt.timezone.utc).timestamp() + fraction
@@ -147,10 +147,10 @@ def _gps_blocks(buf: bytes) -> list[dict]:
 
 
 def parse_window(buf: bytes) -> Window:
-    """Окно записи и качество фикса, без разбора координат."""
+    """The recording window and fix quality, without decoding coordinates."""
     blocks = _gps_blocks(buf)
     if not blocks:
-        raise GpmfError("в потоке GPMF нет ни одного блока GPS")
+        raise GpmfError("the GPMF stream contains no GPS blocks")
     fixed = sum(1 for b in blocks if _numbers(b['GPSF'])[0][0] >= 2)
     return Window(
         start_utc=_gpsu_to_epoch(blocks[0]['GPSU'][3]),
@@ -161,15 +161,15 @@ def parse_window(buf: bytes) -> Window:
 
 
 def parse_gps(buf: bytes) -> list[GpsSample]:
-    """Координаты и скорость с привязкой к спутниковому времени.
+    """Coordinates and speed tied to satellite time.
 
-    ``GPSU`` приходит раз в секунду, а ``GPS5`` отдаёт за это время пачку сэмплов, —
-    поэтому время внутри пачки раскладывается линейно до метки следующего блока.
-    Блоки без фикса пропускаются целиком: координаты в них мусорные.
+    ``GPSU`` arrives once a second while ``GPS5`` delivers a batch of fixes over that
+    same second, so times inside a batch are spread linearly up to the next block's
+    stamp. Blocks without a fix are skipped whole: their coordinates are garbage.
     """
     blocks = _gps_blocks(buf)
     if not blocks:
-        raise GpmfError("в потоке GPMF нет ни одного блока GPS")
+        raise GpmfError("the GPMF stream contains no GPS blocks")
 
     stamps = [_gpsu_to_epoch(b['GPSU'][3]) for b in blocks]
     samples: list[GpsSample] = []

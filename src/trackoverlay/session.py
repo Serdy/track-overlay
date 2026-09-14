@@ -1,9 +1,9 @@
-"""Сборка сессии: от сырых файлов до ``session.json``.
+"""Assembling a session: from raw files to ``session.json``.
 
-``session.json`` — контракт между Python и браузером. Питон не знает ничего про
-отрисовку, браузер — ничего про разбор форматов. Всё время внутри файла считается в
-секундах от начала сессии, а не абсолютными метками: так браузеру не приходится
-возиться с эпохами, а числа остаются короткими.
+``session.json`` is the contract between Python and the browser. Python knows nothing
+about drawing, the browser nothing about parsing formats. Every time inside the file is
+counted in seconds from the session start rather than as an absolute stamp: that spares
+the browser any epoch arithmetic and keeps the numbers short.
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ from . import sync
 from . import telemetry as T
 from .ingest import clips, gpmf, racebox
 
-# Округление при сериализации: полный набор каналов иначе раздувает файл впятеро,
-# а разрешение ниже этого всё равно не несёт смысла.
+# Rounding on serialisation: at full float precision the channel set inflates the file
+# fivefold, and resolution finer than this carries no meaning anyway.
 ROUND = {"lat": 7, "lon": 7, "speed": 2, "lean": 1, "accel": 3, "dist": 1}
 
 
 class SessionError(Exception):
-    """Сессию невозможно собрать из переданных файлов."""
+    """The session cannot be assembled from the given files."""
 
 
 @dataclass
@@ -45,8 +45,8 @@ class Session:
                 "start_utc": stamp.isoformat().replace("+00:00", "Z"),
                 "track": self.track,
                 "duration_s": round(self.telemetry.times[-1] - self.start_utc, 3),
-                # Сетка равномерная по построению, поэтому момент сэмпла i это
-                # ровно i / rate_hz — браузеру не нужна отдельная шкала времени.
+                # The grid is uniform by construction, so sample i sits at exactly
+                # i / rate_hz — the browser needs no separate time axis.
                 "rate_hz": round(self.telemetry.rate_hz, 4),
             },
             "channels": {
@@ -67,7 +67,7 @@ class Session:
                 }
                 for lap in self.laps
             ],
-            "gates": [{"id": "sf", "name": "Старт / Финиш", **self.gate.as_dict()}],
+            "gates": [{"id": "sf", "name": "Start / Finish", **self.gate.as_dict()}],
             "envelope": {"left": self.envelope[0], "right": self.envelope[1]},
             "clips": self.clips,
         }
@@ -87,14 +87,14 @@ def _build_telemetry(data: racebox.RaceBoxData) -> T.Telemetry:
     tel.add("lon", "lon", "deg", columns["lon"])
     tel.add("speed", "speed", "km/h", columns["speed_kmh"])
 
-    # Курс: своя колонка из VBO заметно чище, чем производная от координат.
+    # Heading: a dedicated VBO column is noticeably cleaner than a derivative of coordinates.
     heading = columns.get("heading_deg") or T.heading_from_track(columns["lat"],
                                                                 columns["lon"])
     smooth = T.LEAN_SMOOTH_S if "heading_deg" in columns else T.LEAN_SMOOTH_S * 2.5
     tel.add("lean", "lean", "deg",
             T.compute_lean(columns["speed_kmh"], heading, data.times, smooth_s=smooth))
 
-    # Готовая колонка G лучше производной скорости: у неё нет шума дифференцирования.
+    # A ready G column beats differentiating speed: it carries no differentiation noise.
     accel = columns.get("g_long") or T.accel_long_g(columns["speed_kmh"], data.times)
     tel.add("accel", "accel_long", "g", accel)
 
@@ -113,15 +113,15 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
             try:
                 samples += gpmf.read_gps(path)
             except (gpmf.GpmfError, OSError):
-                pass                      # видео без телеметрии тоже надо показать
+                pass                      # video without telemetry has to show up too
         result = sync.align([s.t_utc for s in samples], [s.speed_kmh for s in samples],
                             tel.times, speeds, session_start_utc=start_utc)
         proxies = clip.proxies()
         out.append({
             "id": f"cam_{clip.id}",
             "files": [str(p) for p in clip.files],
-            # Длительность каждого чанка: браузер играет их по одному тегу <video> и
-            # должен знать, где кончается один файл и начинается следующий.
+            # Duration of each chunk: the browser plays them through one <video> tag and
+            # needs to know where one file ends and the next begins.
             "chunks": [round(c.duration_s, 3) for c in clip.chunks],
             "proxy": [str(p) for p in proxies] if proxies else None,
             "offset_s": round(result.offset_s, 3),
@@ -138,14 +138,14 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
 
 def build_session(racebox_files: list[Path], video_files: list[Path],
                   *, track: str = "") -> Session:
-    """Полный конвейер: парсеры → синхронизация → круги → огибающая."""
+    """The full pipeline: parsers, synchronisation, laps, envelope."""
     if not racebox_files:
-        raise SessionError("не передан ни один экспорт RaceBox")
+        raise SessionError("no RaceBox export was given")
 
     csvs = [p for p in racebox_files if p.suffix.lower() == ".csv"]
     vbos = [p for p in racebox_files if p.suffix.lower() == ".vbo"]
     if not csvs:
-        raise SessionError("нужен хотя бы один CSV RaceBox — VBO сам по себе не годится")
+        raise SessionError("at least one RaceBox CSV is required — a VBO alone will not do")
 
     parts = [racebox.read_csv(p) for p in csvs] + [racebox.read_vbo(p) for p in vbos]
     data = racebox.merge(*parts)
@@ -159,13 +159,13 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
     found_laps = L.split_laps(tel.times, crossings)
     if not found_laps:
         raise SessionError(
-            "не удалось разметить ни одного круга — трек короче круга или ворота не найдены")
+            "could not mark out a single lap — the track is shorter than a lap, or no gate was found")
     envelope = L.build_envelope(lats, lons, found_laps)
 
     found_clips = clips.discover(video_files) if video_files else []
     aligned = _align_clips(found_clips, tel, start_utc)
     if found_clips and not any(c["sync"]["reliable"] for c in aligned):
-        # Не ошибка: материал без GPS тоже монтируется, просто вручную.
+        # Not an error: footage without GPS still cuts together, just by hand.
         pass
 
     return Session(start_utc, track, tel, found_laps, gate, envelope, aligned)

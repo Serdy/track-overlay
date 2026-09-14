@@ -1,12 +1,12 @@
-"""Каналы телеметрии и вычисляемые из них величины.
+"""Telemetry channels and the quantities derived from them.
 
-Телеметрия хранится словарём каналов, а не структурой с фиксированными полями. Причина
-конкретная: в соседнем проекте ``DDA_Reader`` поля зашиты в ``DDARecord.__slots__``, и
-добавление канала требует правки в ``to_dict``, во всех экспортёрах и в каждом виджете —
-поэтому за всю его историю там не появилось ни одного источника данных кроме ``.dda``.
+Telemetry lives in a dict of channels rather than a struct with fixed fields, for a
+concrete reason: in the neighbouring ``DDA_Reader`` project the fields are baked into
+``DDARecord.__slots__``, so adding a channel means editing ``to_dict``, every exporter
+and every widget — which is why in its whole history it never grew a source beyond ``.dda``.
 
-Из четырёх величин, которые показывает оверлей, измеряется напрямую только скорость.
-Остальные считаются здесь.
+Of the four quantities the overlay shows, only speed is measured directly. The rest are
+computed here.
 """
 
 from __future__ import annotations
@@ -14,15 +14,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-G = 9.80665                  # м/с², стандартное ускорение свободного падения
-EARTH_R = 6371000.0          # м
-MIN_LEAN_SPEED_KMH = 10.0    # ниже этой скорости курс шумит и наклон считать бессмысленно
-MAX_LEAN_DEG = 65.0          # физический предел для мотоцикла, всё выше — артефакт
+G = 9.80665                  # m/s², standard gravity
+EARTH_R = 6371000.0          # m
+MIN_LEAN_SPEED_KMH = 10.0    # below this speed heading is noise and lean is meaningless
+MAX_LEAN_DEG = 65.0          # the physical limit for a motorcycle; beyond it is artefact
 
-# Ширина сглаживания скорости изменения курса. Подобрана на сессии 3429 сверкой с
-# собственным углом наклона RaceBox: 0.4 с дают корреляцию 0.999 при курсе из VBO и
-# 0.996 при курсе из координат. Шире — точнее, но индикатор начинает опаздывать за
-# картинкой, что на видео заметнее погрешности в полградуса.
+# Smoothing width for the heading rate. Tuned on session 3429 against RaceBox's own lean
+# angle: 0.4 s gives a correlation of 0.999 with VBO heading and 0.996 with heading
+# derived from coordinates. Wider is more accurate, but the indicator starts lagging the
+# picture, and on video that shows up sooner than half a degree of error.
 LEAN_SMOOTH_S = 0.4
 
 
@@ -39,14 +39,14 @@ class Channel:
 
 @dataclass
 class Telemetry:
-    """Каналы, привязанные к общей шкале времени (секунды эпохи)."""
+    """Channels tied to a common time axis (epoch seconds)."""
     times: list[float]
     channels: dict[str, Channel] = field(default_factory=dict)
 
     def add(self, name: str, role: str, unit: str, samples: list[float]) -> Channel:
         if len(samples) != len(self.times):
             raise ValueError(
-                f"канал {name}: {len(samples)} значений против {len(self.times)} меток времени")
+                f"channel {name}: {len(samples)} values against {len(self.times)} timestamps")
         channel = Channel(name, role, unit, samples)
         self.channels[name] = channel
         return channel
@@ -90,7 +90,7 @@ def cumulative_distance_m(lats: list[float], lons: list[float]) -> list[float]:
 
 
 def heading_from_track(lats: list[float], lons: list[float]) -> list[float]:
-    """Курс из последовательных координат, когда готовой колонки нет."""
+    """Heading from consecutive coordinates, when no ready column exists."""
     if len(lats) < 2:
         return [0.0] * len(lats)
     out = [bearing_deg(lats[i], lons[i], lats[i + 1], lons[i + 1])
@@ -100,10 +100,10 @@ def heading_from_track(lats: list[float], lons: list[float]) -> list[float]:
 
 
 def heading_rate_dps(headings: list[float], times: list[float]) -> list[float]:
-    """Скорость изменения курса, град/с, центральной разностью.
+    """Heading rate in degrees per second, by central difference.
 
-    Разворачивает переход через 360°: без этого на каждом пересечении севера
-    получался бы выброс в 360 град/с.
+    Unwraps the crossing through 360°: without it every pass through north would spike
+    to 360 deg/s.
     """
     n = len(headings)
     if n < 2:
@@ -121,31 +121,31 @@ def heading_rate_dps(headings: list[float], times: list[float]) -> list[float]:
 
 
 def lean_from_trajectory(speeds_kmh: list[float], heading_rate: list[float]) -> list[float]:
-    """Угол наклона из траектории: ``lean = atan(v · dψ/dt / g)``.
+    """Lean angle from the trajectory: ``lean = atan(v · dpsi/dt / g)``.
 
-    С акселерометра этот угол взять нельзя, хотя интуиция подсказывает обратное:
-    в установившемся повороте мотоцикл наклоняется ровно настолько, чтобы
-    равнодействующая сил совпала с его вертикальной осью, поэтому закреплённый на нём
-    датчик покажет боковое ускорение около нуля независимо от угла.
+    This angle cannot be taken off the accelerometer, however much intuition suggests
+    otherwise: in a steady corner the machine leans exactly enough for the resultant
+    force to line up with its own vertical axis, so a sensor bolted to it reads close to
+    zero lateral acceleration regardless of the angle.
 
-    Расчёт из траектории вдобавок не зависит от того, как и под каким углом прикручен
-    логгер, — калибровка ориентации не нужна.
+    Deriving it from the trajectory has the further benefit of not caring how or at what
+    angle the logger is mounted — no orientation calibration needed.
     """
     out = []
     for speed_kmh, rate in zip(speeds_kmh, heading_rate):
         if speed_kmh < MIN_LEAN_SPEED_KMH:
             out.append(0.0)
             continue
-        lateral = (speed_kmh / 3.6) * math.radians(rate)   # v · dψ/dt, м/с²
+        lateral = (speed_kmh / 3.6) * math.radians(rate)   # v · dpsi/dt, m/s²
         angle = math.degrees(math.atan2(lateral, G))
         out.append(max(-MAX_LEAN_DEG, min(MAX_LEAN_DEG, angle)))
     return out
 
 
 def accel_long_g(speeds_kmh: list[float], times: list[float]) -> list[float]:
-    """Продольное ускорение центральной разностью скорости, в g.
+    """Longitudinal acceleration by central difference of speed, in g.
 
-    Запасной путь на случай, когда готовой колонки G нет. Формула та же, что в
+    The fallback when no ready G column exists. Same formula as in
     ``DDA_Reader/dda_core.py``.
     """
     n = len(speeds_kmh)
@@ -161,29 +161,29 @@ def accel_long_g(speeds_kmh: list[float], times: list[float]) -> list[float]:
 
 
 def smooth_seconds(values: list[float], times: list[float], seconds: float) -> list[float]:
-    """Скользящее среднее с шириной окна в секундах, а не в сэмплах.
+    """Moving average with the window given in seconds rather than samples.
 
-    Ширина в сэмплах привязывает алгоритм к частоте конкретного источника: RaceBox даёт
-    25 Гц, GoPro около 18, а ``sr-track.js`` писался под 10. Окно в секундах переживает
-    смену источника без пересчёта констант.
+    A width in samples ties the algorithm to one source's rate: RaceBox gives 25 Hz,
+    GoPro about 18, and ``sr-track.js`` was written for 10. A window in seconds survives
+    a change of source without recomputing constants.
     """
     if seconds <= 0 or len(values) < 2:
         return list(values)
     span = times[-1] - times[0]
     rate = (len(times) - 1) / span if span > 0 else 0.0
-    window = max(1, int(round(seconds * rate)) | 1)     # нечётная ширина
+    window = max(1, int(round(seconds * rate)) | 1)     # odd width
     return moving_average(values, window)
 
 
 def compute_lean(speeds_kmh: list[float], headings: list[float], times: list[float],
                  *, smooth_s: float = LEAN_SMOOTH_S) -> list[float]:
-    """Угол наклона из курса и скорости, со сглаживанием производной курса."""
+    """Lean angle from heading and speed, with the heading rate smoothed."""
     rate = smooth_seconds(heading_rate_dps(headings, times), times, smooth_s)
     return lean_from_trajectory(speeds_kmh, rate)
 
 
 def moving_average(values: list[float], window: int) -> list[float]:
-    """Центрированное скользящее среднее нечётной ширины."""
+    """Centred moving average of odd width."""
     if window <= 1:
         return list(values)
     half = window // 2
@@ -195,13 +195,13 @@ def moving_average(values: list[float], window: int) -> list[float]:
 
 
 def resample_uniform(tel: Telemetry, rate_hz: float) -> Telemetry:
-    """Перекладывает все каналы на строго равномерную сетку.
+    """Rebuilds every channel onto a strictly uniform grid.
 
-    Логгер изредка теряет сэмпл: на сессии 3429 один шаг вышел 79 мс вместо 40. Если
-    считать сетку равномерной как есть, всё после пропуска уедет на 39 мс — это больше
-    двух кадров при 60 fps. А хранить рядом с каналами полную шкалу времени значит
-    добавить в файл ещё сорок тысяч чисел и заставить браузер искать по ней на каждом
-    кадре. Пересборка на ровную сетку снимает оба вопроса разом.
+    The logger drops a sample now and then: on session 3429 one step came out at 79 ms
+    instead of 40. Treating the grid as uniform anyway would shift everything after the
+    gap by 39 ms, which is more than two frames at 60 fps. Storing the full time axis
+    alongside the channels would mean forty thousand more numbers in the file and a
+    search on every frame in the browser. Resampling settles both at once.
     """
     if len(tel.times) < 2:
         return tel

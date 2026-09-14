@@ -13,7 +13,7 @@ VBO = DATA / "RaceBox Track Session on 12-09-2026 14-31.vbo"
 
 @pytest.fixture(scope="module")
 def session():
-    """Сессия без видео: экспорты RaceBox лежат в репозитории, видео — нет."""
+    """A session without video: the RaceBox exports live in the repository, the video does not."""
     return build_session([CSV_LEAN, CSV_CORNERING, VBO], [], track="Slovakia Ring")
 
 
@@ -52,7 +52,7 @@ def test_payload_shape(session):
 
 
 def test_samples_are_rounded(session):
-    """Полная точность float раздувает файл впятеро и ничего не добавляет."""
+    """Full float precision inflates the file fivefold and adds nothing."""
     speeds = session.as_dict()["channels"]["speed"]["samples"]
     assert all(round(v, 2) == v for v in speeds[:500])
 
@@ -65,12 +65,12 @@ def test_write_produces_valid_json(session, tmp_path):
 
 
 def test_requires_racebox_files():
-    with pytest.raises(SessionError, match="не передан ни один экспорт"):
+    with pytest.raises(SessionError, match="no RaceBox export"):
         build_session([], [])
 
 
 def test_vbo_alone_is_not_enough():
-    with pytest.raises(SessionError, match="VBO сам по себе"):
+    with pytest.raises(SessionError, match="VBO alone"):
         build_session([VBO], [])
 
 
@@ -81,18 +81,18 @@ def test_cli_build_without_video(tmp_path, capsys):
     assert code == 0
     assert out.exists()
     printed = capsys.readouterr().out
-    assert "8 кругов" in printed
+    assert "8 laps" in printed
     assert "2:40.349" in printed
 
 
 def test_cli_reports_error_without_telemetry(tmp_path, capsys):
     code = cli.main(["build", str(tmp_path / "nothing.mp4"), "-o", str(tmp_path / "s.json")])
     assert code == 2
-    assert "ошибка" in capsys.readouterr().err
+    assert "error" in capsys.readouterr().err
 
 
 def test_cli_build_with_video(tmp_path, capsys):
-    """Полный прогон с видео: клип должен свестись корреляцией."""
+    """A full run with video: the clip must align by correlation."""
     videos = require_data("GH013429.MP4", "GH023429.MP4", "GH033429.MP4")
     out = tmp_path / "session.json"
     assert cli.main(["build", str(CSV_LEAN), str(VBO), *map(str, videos),

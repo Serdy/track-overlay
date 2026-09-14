@@ -9,7 +9,7 @@ from trackoverlay.ingest.clips import Chunk, Clip, ClipError
 
 def chunk(index: int, *, start: float | None = None, end: float | None = None,
           duration: float = 700.0, name: str | None = None) -> Chunk:
-    """Чанк без файла на диске — проверка стыков это чистая функция."""
+    """A chunk with no file on disk — joint checking is a pure function."""
     return Chunk(Path(name or f"GH{index:02d}3429.MP4"), index, duration, start, end, None)
 
 
@@ -39,32 +39,32 @@ def test_find_proxy(tmp_path):
 
 
 def test_joints_accept_one_gpsu_interval():
-    """Метки GPSU идут раз в секунду, поэтому разрыв около секунды на стыке — норма."""
+    """GPSU stamps arrive once a second, so a gap of about a second at a joint is normal."""
     clips._check_joints([chunk(1, start=100.0, end=800.0),
                          chunk(2, start=800.99, end=1500.0)])
 
 
 def test_joints_reject_missing_chunk():
-    with pytest.raises(ClipError, match="пропущен чанк"):
+    with pytest.raises(ClipError, match="missing chunk"):
         clips._check_joints([chunk(1, start=100.0, end=800.0),
                              chunk(3, start=800.99, end=1500.0)])
 
 
 def test_joints_reject_large_gap():
-    """Большой разрыв означает, что чанки от разных записей."""
-    with pytest.raises(ClipError, match="разрыв"):
+    """A large gap means the chunks belong to different recordings."""
+    with pytest.raises(ClipError, match="gap of"):
         clips._check_joints([chunk(1, start=100.0, end=800.0),
                              chunk(2, start=1400.0, end=2100.0)])
 
 
 def test_joints_reject_overlap():
-    with pytest.raises(ClipError, match="разрыв"):
+    with pytest.raises(ClipError, match="gap of"):
         clips._check_joints([chunk(1, start=100.0, end=800.0),
                              chunk(2, start=750.0, end=1500.0)])
 
 
 def test_joints_skip_check_without_gps():
-    """У записи без фикса спутникового времени нет — сверять стык нечем, но и падать незачем."""
+    """A recording without a fix has no satellite time — nothing to check, but no reason to fail."""
     clips._check_joints([chunk(1), chunk(2)])
 
 
@@ -83,12 +83,12 @@ def test_write_concat_file(tmp_path):
     dst = clips.write_concat_file(clip, tmp_path / "list.txt")
     lines = dst.read_text().splitlines()
     assert len(lines) == 2
-    assert all(line.startswith("file '/") for line in lines)   # пути абсолютные
+    assert all(line.startswith("file '/") for line in lines)   # paths are absolute
 
 
 def test_write_concat_file_without_proxies_raises(tmp_path):
     clip = Clip("3429", [chunk(1)])
-    with pytest.raises(ClipError, match="прокси"):
+    with pytest.raises(ClipError, match="proxy"):
         clips.write_concat_file(clip, tmp_path / "list.txt", proxy=True)
 
 
@@ -97,19 +97,19 @@ def test_discover_rejects_duplicate_chunk(tmp_path):
     b.parent.mkdir()
     for p in (a, b):
         p.touch()
-    with pytest.raises(ClipError, match="дважды"):
+    with pytest.raises(ClipError, match="twice"):
         clips.discover([a, b])
 
 
 def test_discover_rejects_foreign_name(tmp_path):
     stray = tmp_path / "holiday.mp4"
     stray.touch()
-    with pytest.raises(ClipError, match="не похоже на файл GoPro"):
+    with pytest.raises(ClipError, match="does not look like a GoPro file"):
         clips.discover([stray])
 
 
 def test_discover_real_sessions():
-    """Три реальные записи: 3429 и 3431 с GPS, 3430 без фикса вообще."""
+    """Three real recordings: 3429 and 3431 with GPS, 3430 with no fix at all."""
     paths = require_data("GH013429.MP4", "GH023429.MP4", "GH033429.MP4",
                          "GH013430.MP4", "GH023430.MP4",
                          "GH013431.MP4", "GH023431.MP4")
@@ -120,5 +120,5 @@ def test_discover_real_sessions():
     assert found["3429"].duration_s == pytest.approx(1733.7, abs=1.0)
     assert found["3429"].has_gps
 
-    assert not found["3430"].has_gps          # GPS не поймал ни одного фикса
+    assert not found["3430"].has_gps          # GPS never caught a single fix
     assert found["3430"].duration_s == pytest.approx(1341.6, abs=1.0)

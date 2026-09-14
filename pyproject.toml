@@ -1,7 +1,7 @@
 [project]
 name = "trackoverlay"
 version = "0.1.0"
-description = "Наложение телеметрии RaceBox на видео GoPro"
+description = "Overlay RaceBox telemetry onto GoPro video"
 requires-python = ">=3.12,<3.13"
 dependencies = ["numpy>=2.0"]
 

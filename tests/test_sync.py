@@ -9,11 +9,11 @@ from trackoverlay.sync import SyncError
 
 
 def make_profile(duration: float = 800.0, seed: int = 42):
-    """Непериодический профиль скорости как функция времени.
+    """A non-periodic speed profile as a function of time.
 
-    Периодический сигнал (сумма синусов) для проверки корреляции не годится: у него
-    несколько одинаково хороших пиков, и коррелятор законно выбирает не тот. Сглаженное
-    случайное блуждание даёт один острый пик и вдобавок похоже на настоящий трек.
+    A periodic signal (a sum of sines) is no good for testing correlation: it has several
+    equally good peaks and the correlator legitimately picks the wrong one. A smoothed
+    random walk gives one sharp peak and happens to look like a real trace as well.
     """
     rng = np.random.default_rng(seed)
     grid = np.arange(0.0, duration, 0.04)
@@ -32,11 +32,11 @@ def lap_profile(times, *, delay: float = 0.0):
 
 @pytest.fixture
 def grid():
-    return np.arange(0.0, 600.0, 0.04).tolist()      # 10 минут на 25 Гц
+    return np.arange(0.0, 600.0, 0.04).tolist()      # 10 minutes at 25 Hz
 
 
 def test_recovers_known_shift(grid):
-    """Ряд, отставший на 3 с, должен опознаться именно как отставший на 3 с."""
+    """A series delayed by 3 s must be recognised as delayed by exactly 3 s."""
     shift, score, overlap = sync.cross_correlate(
         grid, lap_profile(grid, delay=3.0), grid, lap_profile(grid))
     assert shift == pytest.approx(3.0, abs=0.02)
@@ -51,11 +51,11 @@ def test_recovers_negative_shift(grid):
 
 
 def test_subsample_precision_beats_grid_step(grid):
-    """Сдвиг 1.234 с не кратен шагу сетки 0.1 с — его вытягивает только парабола."""
+    """A 1.234 s offset is not a multiple of the 0.1 s grid — only the parabola finds it."""
     shift, _, _ = sync.cross_correlate(
         grid, lap_profile(grid, delay=1.234), grid, lap_profile(grid))
     assert shift == pytest.approx(1.234, abs=0.02)
-    assert abs(shift - round(shift, 1)) > 0.005      # результат не лёг на узел сетки
+    assert abs(shift - round(shift, 1)) > 0.005      # the result did not land on a grid node
 
 
 def test_zero_shift(grid):
@@ -67,20 +67,20 @@ def test_zero_shift(grid):
 
 def test_short_overlap_raises(grid):
     short = [t + 590.0 for t in grid[:500]]
-    with pytest.raises(SyncError, match="перекрытие"):
+    with pytest.raises(SyncError, match="overlap"):
         sync.cross_correlate(short, lap_profile(short), grid, lap_profile(grid))
 
 
 def test_constant_series_raises(grid):
-    with pytest.raises(SyncError, match="постоянен"):
+    with pytest.raises(SyncError, match="constant"):
         sync.cross_correlate(grid, [50.0] * len(grid), grid, lap_profile(grid))
 
 
 @pytest.mark.parametrize("scores, expected", [
-    (np.array([0.0, 1.0, 0.0]), 0.0),            # симметричный пик — уточнять нечего
-    (np.array([0.5, 1.0, 0.0]), -1 / 6),         # левый сосед выше — пик левее узла
-    (np.array([0.0, 1.0, 0.5]), +1 / 6),         # правый сосед выше — пик правее узла
-    (np.array([1.0, 1.0, 1.0]), 0.0),            # плато, знаменатель нулевой
+    (np.array([0.0, 1.0, 0.0]), 0.0),            # symmetric peak — nothing to refine
+    (np.array([0.5, 1.0, 0.0]), -1 / 6),         # left neighbour higher — peak left of the node
+    (np.array([0.0, 1.0, 0.5]), +1 / 6),         # right neighbour higher — peak right of the node
+    (np.array([1.0, 1.0, 1.0]), 0.0),            # a plateau, zero denominator
 ])
 def test_refine_peak(scores, expected):
     assert sync._refine_peak(scores, 1) == pytest.approx(expected, abs=0.01)
@@ -93,10 +93,10 @@ def test_refine_peak_at_boundary():
 
 
 def test_align_uses_utc_as_base(grid):
-    """Видео началось на 100 с раньше телеметрии, но показывает то же самое.
+    """The video started 100 s before the telemetry but shows the same thing.
 
-    Оба ряда отражают одно физическое событие, поэтому поправка должна выйти нулевой,
-    а смещение видео по шкале сессии — ровно разницей стартов.
+    Both series reflect one physical event, so the correction must come out zero and the
+    video offset on the session axis must equal the difference between the starts.
     """
     video_t = [1000.0 + t for t in grid]
     tel_t = [1100.0 + t for t in grid]
@@ -109,7 +109,7 @@ def test_align_uses_utc_as_base(grid):
 
 
 def test_align_corrects_delayed_video(grid):
-    """Видео отстаёт на 1.4 с — столько же, сколько намерено на реальной сессии."""
+    """The video lags by 1.4 s — the same amount measured on the real session."""
     video_t = [1000.0 + t for t in grid]
     tel_t = [1100.0 + t for t in grid]
     result = sync.align(video_t, SPEED(np.array(video_t) - 1000.0 - 1.4).tolist(),
@@ -120,14 +120,14 @@ def test_align_corrects_delayed_video(grid):
 
 
 def test_align_falls_back_to_manual_without_motion(grid):
-    """Видео без фикса GPS: корреляции не из чего считать, но падать нельзя."""
+    """Video without a GPS fix: nothing to correlate, but failing is not allowed."""
     result = sync.align([], [], grid, lap_profile(grid), session_start_utc=0.0)
     assert result.method == "manual"
     assert result.reliable is False
 
 
 def test_align_falls_back_to_utc_without_overlap(grid):
-    """Материал с разных дней: UTC даёт ответ, корреляция — нет."""
+    """Footage from different days: UTC has an answer, correlation does not."""
     far = [t + 86400.0 for t in grid]
     result = sync.align(far, lap_profile(grid), grid, lap_profile(grid),
                         session_start_utc=grid[0])
@@ -142,13 +142,13 @@ def test_align_applies_manual_correction(grid):
 
 
 def test_real_session_3429():
-    """Реальное сведение: видео начинается на 116 с раньше телеметрии."""
+    """Real alignment: the video starts 116 s before the telemetry."""
     from trackoverlay.ingest import clips, gpmf, racebox
 
     files = require_data("GH013429.MP4", "GH023429.MP4", "GH033429.MP4")
     csv = DATA / "RaceBox Track Session on 12-09-2026 14-31_lean.csv"
     if not csv.exists():
-        pytest.skip("нет экспорта RaceBox")
+        pytest.skip("no RaceBox export")
 
     rb = racebox.read_csv(csv)
     samples = [s for f in files for s in gpmf.read_gps(f)]
@@ -159,7 +159,7 @@ def test_real_session_3429():
     assert result.method == "xcorr"
     assert result.reliable
     assert result.correlation > 0.99
-    # Поправка измерена в разведке до реализации: пик лежал между 1.30 и 1.40 с.
+    # Measured during reconnaissance, before implementation: the peak sat between 1.30 and 1.40 s.
     assert -1.45 < result.correction_s < -1.25
     assert result.offset_s == pytest.approx(-116.1, abs=0.5)
     assert result.overlap_s == pytest.approx(26.9 * 60, abs=30)

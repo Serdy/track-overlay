@@ -11,7 +11,7 @@ LAT0, LON0 = 48.0554, 17.5699
 
 
 def north_track(count=21, span_m=200.0, east_m=0.0):
-    """Прямой отрезок с юга на север через опорную точку."""
+    """A straight segment running south to north through the reference point."""
     frame = L.LocalFrame(LAT0, LON0)
     y = np.linspace(-span_m / 2, span_m / 2, count)
     lon, lat = frame.to_lonlat(np.full(count, east_m), y)
@@ -34,7 +34,7 @@ def test_local_frame_round_trip():
 
 
 def test_local_frame_scale():
-    """Одна минута широты это морская миля."""
+    """One minute of latitude is a nautical mile."""
     frame = L.LocalFrame(LAT0, LON0)
     _, y = frame.to_xy([LAT0 + 1 / 60], [LON0])
     assert y[0] == pytest.approx(1852, rel=0.005)
@@ -42,7 +42,7 @@ def test_local_frame_scale():
 
 @pytest.mark.parametrize("dlat, dlon", [(0.01, 0.0), (0.0, 0.01), (0.005, -0.008)])
 def test_local_frame_agrees_with_haversine(dlat, dlon):
-    """Плоская проекция и сферическая формула должны давать одно расстояние."""
+    """The flat projection and the spherical formula must agree on distance."""
     from trackoverlay.telemetry import haversine_m
 
     frame = L.LocalFrame(LAT0, LON0)
@@ -60,7 +60,7 @@ def test_bearing_delta(a, b, expected):
 
 
 def test_crossing_is_interpolated_between_samples():
-    """Момент пересечения должен попадать между сэмплами, а не на ближайший."""
+    """The crossing moment must land between samples, not on the nearest one."""
     lat, lon, times = north_track(count=21)
     gate = Gate(LAT0, LON0, 0.0)
     crossings = L.find_crossings(lat, lon, times, gate)
@@ -69,9 +69,9 @@ def test_crossing_is_interpolated_between_samples():
 
 
 def test_crossing_ignores_reverse_direction():
-    """Проезд той же линии в обратную сторону кругом не считается."""
+    """Driving back over the same line does not count as a lap."""
     lat, lon, times = north_track()
-    gate = Gate(LAT0, LON0, 180.0)           # ворота смотрят на юг
+    gate = Gate(LAT0, LON0, 180.0)           # the gate faces south
     assert L.find_crossings(lat, lon, times, gate) == []
 
 
@@ -82,11 +82,11 @@ def test_crossing_ignores_pass_beyond_gate_width():
 
 
 def test_crossing_respects_minimum_gap():
-    """Два пересечения подряд быстрее минимального круга — это одно срабатывание."""
+    """Two crossings closer together than the minimum lap are one trigger."""
     lat, lon, times = north_track(count=11, span_m=100.0)
     doubled_lat = lat + lat
     doubled_lon = lon + lon
-    doubled_times = times + [t + 12.0 for t in times]      # второй проезд через 12 с
+    doubled_times = times + [t + 12.0 for t in times]      # a second pass 12 s later
     gate = Gate(LAT0, LON0, 0.0)
     assert len(L.find_crossings(doubled_lat, doubled_lon, doubled_times, gate)) == 1
 
@@ -105,7 +105,7 @@ def test_split_laps_drops_too_short():
 
 
 def test_frenet_offset_on_straight_reference():
-    """Точка в 5 м сбоку от прямой должна дать ровно такое боковое отклонение."""
+    """A point 5 m to the side of a straight line must give exactly that lateral offset."""
     ref_x = np.linspace(0, 100, 101)
     ref_y = np.zeros(101)
     s, offset = L.frenet_project(ref_x, ref_y, np.array([50.0]), np.array([5.0]))
@@ -122,7 +122,7 @@ def test_frenet_offset_sign_flips_by_side():
 
 
 def test_envelope_width_matches_lap_spread():
-    """Два круга по концентрическим окружностям дают полосу шириной в их разницу."""
+    """Two laps on concentric circles give a band as wide as the difference."""
     inner_lat, inner_lon = circle_track(200.0)
     outer_lat, outer_lon = circle_track(203.0)
     lats = np.concatenate([inner_lat, outer_lat])
@@ -141,23 +141,23 @@ def test_envelope_width_matches_lap_spread():
 
 
 def test_envelope_requires_laps():
-    with pytest.raises(LapError, match="без кругов"):
+    with pytest.raises(LapError, match="no laps"):
         L.build_envelope([48.0], [17.0], [])
 
 
 def test_detect_gate_needs_motion():
-    with pytest.raises(LapError, match="уверенным движением"):
+    with pytest.raises(LapError, match="confident movement"):
         L.detect_start_finish([48.0] * 10, [17.0] * 10, [0.0] * 10, [1.0] * 10)
 
 
 def test_real_session_lap_times():
-    """Ворота ищутся автоматически, а времена сверяются с тем, что показал RaceBox."""
+    """The gate is found automatically, and the times are checked against RaceBox."""
     from trackoverlay.ingest import racebox
     from trackoverlay import telemetry as T
 
     csv = DATA / "RaceBox Track Session on 12-09-2026 14-31_lean.csv"
     if not csv.exists():
-        pytest.skip("нет экспорта RaceBox")
+        pytest.skip("no RaceBox export")
     rb = racebox.read_csv(csv)
     c = rb.columns
     heading = T.heading_from_track(c["lat"], c["lon"])
@@ -165,9 +165,9 @@ def test_real_session_lap_times():
     gate = L.detect_start_finish(c["lat"], c["lon"], heading, c["speed_kmh"])
     laps = L.split_laps(rb.times, L.find_crossings(c["lat"], c["lon"], rb.times, gate))
 
-    assert len(laps) == int(max(c["lap"]))            # столько же, сколько насчитал RaceBox
+    assert len(laps) == int(max(c["lap"]))            # as many as RaceBox counted
     best = min(lap.duration_s for lap in laps)
-    assert best == pytest.approx(160.34, abs=0.05)    # приложение показывает 2:40.34
+    assert best == pytest.approx(160.34, abs=0.05)    # the app shows 2:40.34
 
     left, right = L.build_envelope(c["lat"], c["lon"], laps)
     assert len(left) == len(right) == 400

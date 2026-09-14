@@ -1,4 +1,4 @@
-"""Командная строка track-overlay."""
+"""The track-overlay command line."""
 
 from __future__ import annotations
 
@@ -18,22 +18,22 @@ def _build(args: argparse.Namespace) -> int:
     session.write(args.output)
 
     best = min((lap.duration_s for lap in session.laps), default=0.0)
-    print(f"сессия: {session.telemetry.rate_hz:.1f} Гц, "
-          f"{len(session.telemetry.times)} сэмплов, {len(session.laps)} кругов, "
-          f"лучший {best // 60:.0f}:{best % 60:06.3f}")
+    print(f"session: {session.telemetry.rate_hz:.1f} Hz, "
+          f"{len(session.telemetry.times)} samples, {len(session.laps)} laps, "
+          f"best {best // 60:.0f}:{best % 60:06.3f}")
     for clip in session.clips:
         mark = "✓" if clip["sync"]["reliable"] else "!"
-        print(f"  {mark} {clip['id']}: старт {clip['offset_s']:+.2f} с, "
-              f"{clip['duration_s'] / 60:.1f} мин, "
-              f"сведение {clip['sync']['method']} "
-              f"(корр {clip['sync']['correlation']:.4f})")
-    print(f"записано: {args.output}")
+        print(f"  {mark} {clip['id']}: starts {clip['offset_s']:+.2f} s, "
+              f"{clip['duration_s'] / 60:.1f} min, "
+              f"sync {clip['sync']['method']} "
+              f"(corr {clip['sync']['correlation']:.4f})")
+    print(f"written: {args.output}")
     return 0
 
 
 def _serve(args: argparse.Namespace) -> int:
     if not args.session.exists():
-        raise SessionError(f"нет файла {args.session} — сначала выполните build")
+        raise SessionError(f"no such file {args.session} — run build first")
     serve(args.session, port=args.port, open_browser=not args.no_browser)
     return 0
 
@@ -41,17 +41,17 @@ def _serve(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="trackoverlay",
-        description="Наложение телеметрии RaceBox на видео GoPro")
+        description="Overlay RaceBox telemetry onto GoPro video")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    build = sub.add_parser("build", help="собрать session.json из файлов сессии")
+    build = sub.add_parser("build", help="assemble session.json from the session files")
     build.add_argument("files", nargs="+", type=Path,
-                       help="CSV и VBO от RaceBox, файлы MP4 от GoPro")
+                       help="RaceBox CSV and VBO, GoPro MP4 files")
     build.add_argument("-o", "--output", type=Path, default=Path("out/session.json"))
-    build.add_argument("--track", default="", help="название трассы для заголовка")
+    build.add_argument("--track", default="", help="circuit name for the header")
     build.set_defaults(func=_build)
 
-    run = sub.add_parser("serve", help="открыть редактор в браузере")
+    run = sub.add_parser("serve", help="open the editor in a browser")
     run.add_argument("session", type=Path, nargs="?", default=Path("out/session.json"))
     run.add_argument("-p", "--port", type=int, default=8712)
     run.add_argument("--no-browser", action="store_true")
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except SessionError as err:
-        print(f"ошибка: {err}", file=sys.stderr)
+        print(f"error: {err}", file=sys.stderr)
         return 2
 
 

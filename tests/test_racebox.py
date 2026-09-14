@@ -15,7 +15,7 @@ def test_read_csv_bike_mode(rb_lean):
     assert data.times[0] == pytest.approx(FIRST_STAMP, abs=0.001)
     assert data.columns["lat"][0] == pytest.approx(FIRST_LAT)
     assert data.columns["lon"][0] == pytest.approx(FIRST_LON)
-    # Bike Mode отдаёт угол наклона вместо бокового ускорения.
+    # Bike Mode yields the lean angle instead of lateral acceleration.
     assert "lean_deg" in data
     assert "g_lat" not in data
 
@@ -45,7 +45,7 @@ def test_merge_rejects_different_lengths(rb_lean, rb_cornering):
     trimmed = racebox.RaceBoxData(other.times[:-1],
                                   {k: v[:-1] for k, v in other.columns.items()},
                                   other.source)
-    with pytest.raises(RaceBoxError, match="разные сессии"):
+    with pytest.raises(RaceBoxError, match="different sessions"):
         racebox.merge(short, trimmed)
 
 
@@ -54,12 +54,12 @@ def test_merge_rejects_time_skew(rb_lean, rb_cornering):
     shifted = racebox.read_csv(rb_cornering)
     shifted = racebox.RaceBoxData([t + 1.0 for t in shifted.times],
                                   shifted.columns, shifted.source)
-    with pytest.raises(RaceBoxError, match="расхождение меток"):
+    with pytest.raises(RaceBoxError, match="timestamps differ"):
         racebox.merge(base, shifted)
 
 
 def test_merge_without_arguments_raises():
-    with pytest.raises(RaceBoxError, match="нечего объединять"):
+    with pytest.raises(RaceBoxError, match="nothing to merge"):
         racebox.merge()
 
 
@@ -67,12 +67,12 @@ def test_read_vbo(rb_vbo):
     data = racebox.read_vbo(rb_vbo)
     assert len(data) == 2000
     assert data.times[0] == pytest.approx(FIRST_STAMP, abs=0.01)
-    assert "heading_deg" in data          # ради этой колонки VBO и нужен
+    assert "heading_deg" in data          # this column is the whole point of the VBO
     assert 0 <= data.columns["heading_deg"][0] <= 360
 
 
 def test_vbo_coordinates_match_csv(rb_vbo, rb_lean):
-    """VBOX хранит координаты в минутах, а долготу с обратным знаком."""
+    """VBOX stores coordinates in minutes, and longitude with the opposite sign."""
     vbo, csv_data = racebox.read_vbo(rb_vbo), racebox.read_csv(rb_lean)
     for channel in ("lat", "lon"):
         for a, b in zip(vbo.columns[channel][:200], csv_data.columns[channel][:200]):
@@ -87,29 +87,29 @@ def test_vbo_speed_matches_csv(rb_vbo, rb_lean):
 
 def test_csv_without_header_raises(tmp_path):
     bad = tmp_path / "notes.csv"
-    bad.write_text("что-то совсем другое\n1,2,3\n")
-    with pytest.raises(RaceBoxError, match="не найден заголовок"):
+    bad.write_text("something else entirely\n1,2,3\n")
+    with pytest.raises(RaceBoxError, match="no table header"):
         racebox.read_csv(bad)
 
 
 def test_csv_missing_required_columns_raises(tmp_path):
     bad = tmp_path / "partial.csv"
     bad.write_text("Record,Time,Latitude\n1,2026-09-12T12:31:30.120Z,48.0\n")
-    with pytest.raises(RaceBoxError, match="обязательных колонок"):
+    with pytest.raises(RaceBoxError, match="required Time and Speed"):
         racebox.read_csv(bad)
 
 
 def test_csv_empty_table_raises(tmp_path):
     bad = tmp_path / "empty.csv"
     bad.write_text("Record,Time,Speed\n")
-    with pytest.raises(RaceBoxError, match="пуста"):
+    with pytest.raises(RaceBoxError, match="empty"):
         racebox.read_csv(bad)
 
 
 def test_bad_timestamp_raises(tmp_path):
     bad = tmp_path / "broken.csv"
-    bad.write_text("Record,Time,Speed\n1,вчера,5.0\n")
-    with pytest.raises(RaceBoxError, match="метка времени"):
+    bad.write_text("Record,Time,Speed\n1,yesterday,5.0\n")
+    with pytest.raises(RaceBoxError, match="timestamp"):
         racebox.read_csv(bad)
 
 

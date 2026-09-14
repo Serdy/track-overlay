@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Показывает, как сводятся видео GoPro и телеметрия RaceBox.
+"""Shows how GoPro video and RaceBox telemetry line up.
 
-Диагностический скрипт: считает поправку синхронизации для каждой записи и проверяет,
-не плывёт ли она по ходу сессии.
+A diagnostic script: computes the sync correction for each recording and checks whether
+it drifts over the session.
 
     uv run python tools/sync_check.py data/*.csv data/GH*.MP4
 """
@@ -27,13 +27,13 @@ def main() -> None:
     csvs = [p for p in args.files if p.suffix.lower() == ".csv"]
     videos = [p for p in args.files if p.suffix.lower() == ".mp4"]
     if not csvs or not videos:
-        raise SystemExit("нужен хотя бы один CSV RaceBox и одно видео")
+        raise SystemExit("at least one RaceBox CSV and one video are required")
 
     telemetry = racebox.merge(*(racebox.read_csv(p) for p in csvs))
     speeds = telemetry.columns["speed_kmh"]
     start = telemetry.times[0]
-    print(f"телеметрия: {len(telemetry)} строк, {telemetry.rate_hz:.1f} Гц, "
-          f"старт {dt.datetime.fromtimestamp(start, dt.timezone.utc):%d.%m %H:%M:%S} UTC\n")
+    print(f"telemetry: {len(telemetry)} rows, {telemetry.rate_hz:.1f} Hz, "
+          f"start {dt.datetime.fromtimestamp(start, dt.timezone.utc):%d.%m %H:%M:%S} UTC\n")
 
     for clip in clips.discover(videos):
         samples = []
@@ -44,14 +44,14 @@ def main() -> None:
                 pass
         result = sync.align([s.t_utc for s in samples], [s.speed_kmh for s in samples],
                             telemetry.times, speeds, session_start_utc=start)
-        print(f"запись {clip.id}: метод {result.method:6} поправка {result.correction_s:+6.2f}с "
-              f"корр {result.correlation:.4f} перекрытие {result.overlap_s/60:5.1f}мин "
-              f"старт {result.offset_s:+9.2f}с")
+        print(f"recording {clip.id}: method {result.method:6} correction {result.correction_s:+6.2f}s "
+              f"corr {result.correlation:.4f} overlap {result.overlap_s/60:5.1f}min "
+              f"start {result.offset_s:+9.2f}s")
 
         if result.method != "xcorr" or not samples:
             continue
 
-        # Постоянна ли поправка? Дрейф часов выдал бы себя разбросом по окнам.
+        # Is the correction constant? Clock drift would show up as spread across windows.
         video_t = np.array([s.t_utc for s in samples])
         video_v = np.array([s.speed_kmh for s in samples])
         lo, hi = max(video_t[0], start), min(video_t[-1], telemetry.times[-1])
@@ -67,8 +67,8 @@ def main() -> None:
             except sync.SyncError:
                 pass
         if lags:
-            print(f"    по {len(lags)} окнам: разброс {max(lags)-min(lags):.2f}с "
-                  f"(дрейфа нет, если меньше 0.1с)")
+            print(f"    across {len(lags)} windows: spread {max(lags)-min(lags):.2f}s "
+                  f"(no drift if under 0.1s)")
 
 
 if __name__ == "__main__":

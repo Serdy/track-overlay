@@ -1,18 +1,18 @@
-"""Чтение экспорта сессии из приложения RaceBox.
+"""Reading a session export from the RaceBox app.
 
-Приложение отдаёт три формата, из которых нужны два.
+The app offers three formats, two of which are useful here.
 
-**CSV** — основной. 25 Гц, время в ISO 8601 UTC. Есть подвох: настройка «Bike Mode»
-*заменяет* боковое ускорение углом наклона, а не добавляет его. Поэтому одна и та же
-сессия выгружается дважды, и :func:`merge` сводит обе выгрузки в один набор колонок.
+**CSV** is the main one. 25 Hz, time in ISO 8601 UTC. There is a catch: the Bike Mode
+setting *replaces* lateral acceleration with lean angle rather than adding it. So the
+same session is exported twice and :func:`merge` folds both files into one channel set.
 
-**VBO** — формат VBOX, нужен ради колонки ``heading``, которой в CSV нет. У него свои
-причуды: время как ``ЧЧММСС.сс``, координаты в угловых минутах, а **долгота с обратным
-знаком** относительно CSV (в VBOX запад положителен).
+**VBO** is the VBOX format, wanted for the ``heading`` column that CSV lacks. It has its
+own quirks: time as ``HHMMSS.ss``, coordinates in arc minutes, and **longitude with the
+opposite sign** compared to CSV (VBOX counts west as positive).
 
-Данные возвращаются набором именованных колонок, а не структурой с фиксированными
-полями: наборы каналов у разных выгрузок отличаются, и перечислять их в классе — прямой
-путь к тому, чтобы каждый новый канал требовал правки в пяти местах.
+Data comes back as a set of named columns rather than a struct with fixed fields: the
+channel set differs between exports, and listing them in a class is the direct route to
+every new channel requiring edits in five places.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-# Заголовки CSV → внутренние имена каналов.
+# CSV headers mapped to internal channel names.
 _CSV_COLUMNS = {
     "Latitude": "lat", "Longitude": "lon", "Altitude": "alt_m",
     "Speed": "speed_kmh", "Lap": "lap",
@@ -32,7 +32,7 @@ _CSV_COLUMNS = {
     "GyroX": "gyro_x", "GyroY": "gyro_y", "GyroZ": "gyro_z",
 }
 
-# Колонки VBO → внутренние имена. lat/lng и время обрабатываются отдельно.
+# VBO columns mapped to internal names. lat/lng and time are handled separately.
 _VBO_COLUMNS = {
     "velocity": "speed_kmh", "heading": "heading_deg", "height": "alt_m",
     "LongAcc": "g_long", "LatAcc": "g_lat", "VertAcc": "g_vert",
@@ -42,16 +42,16 @@ _VBO_COLUMNS = {
     "z-rotation-gyroscope": "gyro_z",
 }
 
-MAX_MERGE_SKEW_S = 0.005   # выгрузки одной сессии обязаны совпадать по времени точно
+MAX_MERGE_SKEW_S = 0.005   # exports of one session must line up in time exactly
 
 
 class RaceBoxError(Exception):
-    """Файл не похож на экспорт RaceBox или выгрузки не сводятся."""
+    """The file does not look like a RaceBox export, or the exports do not merge."""
 
 
 @dataclass(frozen=True)
 class RaceBoxData:
-    times: list[float]                 # секунды эпохи
+    times: list[float]                 # seconds since the epoch
     columns: dict[str, list[float]]
     source: Path
 
@@ -72,23 +72,23 @@ def _parse_iso(text: str) -> float:
         return _dt.datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
             tzinfo=_dt.timezone.utc).timestamp()
     except ValueError as err:
-        raise RaceBoxError(f"нераспознанная метка времени: {text!r}") from err
+        raise RaceBoxError(f"unrecognised timestamp: {text!r}") from err
 
 
 def read_csv(path: Path) -> RaceBoxData:
-    """Читает CSV-экспорт, автоматически определяя вариант Bike Mode."""
+    """Reads a CSV export, detecting the Bike Mode variant automatically."""
     with open(path, newline="", encoding="utf-8-sig") as handle:
-        # Если включён «Include session description header», перед таблицей идут
-        # строки метаданных — пропускаем их до настоящего заголовка.
+        # When "Include session description header" is on, metadata lines precede the
+        # table — skip them until the real header row.
         lines = [line for line in handle]
     start = next((i for i, line in enumerate(lines) if line.startswith("Record,")), None)
     if start is None:
-        raise RaceBoxError(f"{path.name}: не найден заголовок таблицы (строка с 'Record,')")
+        raise RaceBoxError(f"{path.name}: no table header found (a line starting with 'Record,')")
 
     reader = csv.DictReader(lines[start:])
     known = {src: dst for src, dst in _CSV_COLUMNS.items() if src in (reader.fieldnames or [])}
     if "Speed" not in known or "Time" not in (reader.fieldnames or []):
-        raise RaceBoxError(f"{path.name}: в таблице нет обязательных колонок Time и Speed")
+        raise RaceBoxError(f"{path.name}: the table lacks the required Time and Speed columns")
 
     times: list[float] = []
     columns: dict[str, list[float]] = {name: [] for name in known.values()}
@@ -97,12 +97,12 @@ def read_csv(path: Path) -> RaceBoxData:
         for src, dst in known.items():
             columns[dst].append(float(row[src]))
     if not times:
-        raise RaceBoxError(f"{path.name}: таблица пуста")
+        raise RaceBoxError(f"{path.name}: the table is empty")
     return RaceBoxData(times, columns, path)
 
 
 def _parse_vbo_time(token: str) -> float:
-    """``123130.12`` → секунды от полуночи UTC."""
+    """``123130.12`` becomes seconds since UTC midnight."""
     value = float(token)
     hours, rest = divmod(value, 10000)
     minutes, seconds = divmod(rest, 100)
@@ -110,16 +110,16 @@ def _parse_vbo_time(token: str) -> float:
 
 
 def _parse_vbo_coord(token: str) -> float:
-    """VBOX хранит координаты в угловых минутах."""
+    """VBOX stores coordinates in arc minutes."""
     return float(token) / 60.0
 
 
 def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
-    """Читает VBO. Нужен главным образом ради колонки ``heading``.
+    """Reads a VBO. Wanted mainly for the ``heading`` column.
 
-    Во времени VBO нет даты, только время суток, поэтому дату надо задать через
-    ``day_utc`` (полночь нужных суток в секундах эпохи). Без него берётся дата из
-    строки ``UTC Date Started`` в секции комментариев.
+    VBO time carries no date, only a time of day, so the date has to be supplied through
+    ``day_utc`` (midnight of that day in epoch seconds). Without it the date is taken from
+    the ``UTC Date Started`` line in the comments section.
     """
     text = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
@@ -143,23 +143,23 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
             rows.append(stripped.split())
 
     if names is None or not rows:
-        raise RaceBoxError(f"{path.name}: нет секций [column names] и [data]")
+        raise RaceBoxError(f"{path.name}: no [column names] and [data] sections")
     if day_utc is None:
         if started is None:
-            raise RaceBoxError(f"{path.name}: дата не найдена, передайте day_utc")
+            raise RaceBoxError(f"{path.name}: no date found, pass day_utc")
         day_utc = _dt.datetime.combine(
             started, _dt.time(), tzinfo=_dt.timezone.utc).timestamp()
 
     index = {name: i for i, name in enumerate(names)}
     if "time" not in index:
-        raise RaceBoxError(f"{path.name}: в [column names] нет колонки time")
+        raise RaceBoxError(f"{path.name}: [column names] has no time column")
 
     times = [day_utc + _parse_vbo_time(r[index["time"]]) for r in rows]
     columns: dict[str, list[float]] = {}
     if "lat" in index:
         columns["lat"] = [_parse_vbo_coord(r[index["lat"]]) for r in rows]
     if "lng" in index:
-        # Знак долготы в VBOX обратный: запад положителен.
+        # VBOX flips the sign of longitude: west is positive there.
         columns["lon"] = [-_parse_vbo_coord(r[index["lng"]]) for r in rows]
     for src, dst in _VBO_COLUMNS.items():
         if src in index:
@@ -168,25 +168,25 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
 
 
 def merge(*datasets: RaceBoxData) -> RaceBoxData:
-    """Сводит несколько выгрузок одной сессии в один набор каналов.
+    """Folds several exports of one session into a single channel set.
 
-    Нужно из-за Bike Mode: он отдаёт либо ``lean_deg``, либо ``g_lat``, но не оба сразу.
-    Метки времени обязаны совпадать — иначе это разные сессии, и молча склеивать их
-    нельзя.
+    Needed because of Bike Mode: it yields either ``lean_deg`` or ``g_lat``, never both.
+    The timestamps have to match — otherwise these are different sessions, and splicing
+    them silently would be wrong.
     """
     if not datasets:
-        raise RaceBoxError("нечего объединять")
+        raise RaceBoxError("nothing to merge")
     base, *rest = datasets
     columns = dict(base.columns)
     for other in rest:
         if len(other) != len(base):
             raise RaceBoxError(
-                f"{other.source.name}: {len(other)} строк против {len(base)} "
-                f"в {base.source.name} — это разные сессии")
+                f"{other.source.name}: {len(other)} rows against {len(base)} "
+                f"in {base.source.name} — these are different sessions")
         skew = max(abs(a - b) for a, b in zip(base.times, other.times))
         if skew > MAX_MERGE_SKEW_S:
             raise RaceBoxError(
-                f"{other.source.name}: расхождение меток до {skew:.3f} с — разные сессии")
+                f"{other.source.name}: timestamps differ by up to {skew:.3f} s — different sessions")
         for name, values in other.columns.items():
             columns.setdefault(name, values)
     return RaceBoxData(base.times, columns, base.source)

@@ -1,19 +1,19 @@
-"""Разметка трассы: линия старт/финиша, круги и огибающая траекторий.
+"""Track layout: the start/finish line, laps and the envelope of trajectories.
 
-Круги нужны не только ради времён. Огибающая всех кругов — это тот бледный контур,
-поверх которого виджет карты рисует текущую линию, и без разбивки на круги его не
-построить.
+Laps are not only about times. The envelope of all laps is the pale outline the map
+widget draws the current line on top of, and it cannot be built without splitting the
+session into laps.
 
-Два места, где легко ошибиться:
+Two places where it is easy to go wrong:
 
-**Пересечение ворот** считается настоящим пересечением отрезков, а не попаданием в
-радиус. Радиус даёт время срабатывания с точностью до сэмпла и ошибается тем сильнее,
-чем быстрее едешь; пересечение отрезков даёт точку между сэмплами.
+**A gate crossing** is computed as a real segment intersection, not as falling inside a
+radius. A radius resolves the trigger only to the nearest sample and errs the more the
+faster you go; a segment intersection lands between samples.
 
-**Усреднение кругов** идёт по пройденному пути, а не по времени или номеру сэмпла.
-Круги разной длительности, поэтому сэмпл номер 500 на быстром и на медленном круге —
-это разные места трассы. Точки проецируются на эталонный круг (координаты Френе), и
-усредняется уже боковое отклонение при равном пути.
+**Averaging laps** goes by distance travelled, not by time or sample index. Laps differ
+in duration, so sample number 500 on a fast lap and on a slow one are different places
+on the circuit. Points are projected onto a reference lap (Frenet coordinates), and it
+is the lateral offset at equal distance that gets averaged.
 """
 
 from __future__ import annotations
@@ -25,23 +25,23 @@ import numpy as np
 
 from .telemetry import EARTH_R
 
-GATE_HALF_WIDTH_M = 25.0     # половина длины линии ворот
-MIN_LAP_S = 25.0             # быстрее этого круг не проехать — значит ложное срабатывание
-MIN_GATE_SPEED_KMH = 30.0    # ворота ищем по быстрым участкам, а не по пит-лейну
-CANDIDATE_STEP = 25          # каждая N-я точка как кандидат в ворота
-MATCH_RADIUS_M = 22.0        # допуск при подсчёте проездов через кандидата
-MATCH_BEARING_DEG = 50.0     # и допуск по курсу: встречное направление не считается
+GATE_HALF_WIDTH_M = 25.0     # half the length of the gate line
+MIN_LAP_S = 25.0             # no lap is quicker than this, so it must be a false trigger
+MIN_GATE_SPEED_KMH = 30.0    # gates are looked for on fast sections, not in the pit lane
+CANDIDATE_STEP = 25          # every Nth point is a gate candidate
+MATCH_RADIUS_M = 22.0        # tolerance when counting passes through a candidate
+MATCH_BEARING_DEG = 50.0     # and a heading tolerance: the opposite direction does not count
 
 
 class LapError(Exception):
-    """Трек не размечается на круги."""
+    """The track does not split into laps."""
 
 
 @dataclass(frozen=True)
 class Gate:
     lat: float
     lon: float
-    bearing: float           # курс движения через ворота, градусы
+    bearing: float           # heading of travel through the gate, degrees
 
     def as_dict(self) -> dict:
         return {"lat": self.lat, "lon": self.lon, "bearing": self.bearing}
@@ -61,17 +61,17 @@ class Lap:
 
 
 class LocalFrame:
-    """Перевод координат в метры вокруг опорной точки.
+    """Converting coordinates to metres around a reference point.
 
-    На масштабе автодрома равнопромежуточной проекции более чем достаточно, а возни
-    с настоящей картографией она не требует.
+    At circuit scale an equirectangular projection is more than enough, and it spares the
+    fuss of real cartography.
     """
 
     def __init__(self, lat0: float, lon0: float):
         self.lat0, self.lon0 = lat0, lon0
-        # Длина градуса берётся из той же сферической модели, что и haversine_m в
-        # telemetry. Эллипсоидальные коэффициенты точнее в абсолюте, но расходятся с
-        # ней на 0.3%, а вся геометрия здесь относительная — единая модель важнее.
+        # The degree length comes from the same spherical model as haversine_m in
+        # telemetry. Ellipsoidal coefficients are more accurate in absolute terms but
+        # differ from it by 0.3%, and all geometry here is relative — one model matters more.
         phi = math.radians(lat0)
         self._ky = math.radians(1.0) * EARTH_R
         self._kx = self._ky * math.cos(phi)
@@ -86,22 +86,22 @@ class LocalFrame:
 
 
 def _bearing_delta(a: float, b: float) -> float:
-    """Разница курсов по кратчайшей дуге, 0..180."""
+    """Difference between headings along the shorter arc, 0..180."""
     return abs((b - a + 180.0) % 360.0 - 180.0)
 
 
 def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
-    """Ищет точку, которую трек чаще всего проезжает в одну и ту же сторону.
+    """Finds the point the track passes most often in the same direction.
 
-    Подход тот же, что в ``DDA_Reader``: перебрать кандидатов и посчитать проезды,
-    разделённые по времени, чтобы соседние сэмплы одного проезда не считались за разные.
+    Same approach as in ``DDA_Reader``: walk the candidates and count passes separated in
+    time, so that adjacent samples of one pass are not counted as several.
     """
     lats, lons = np.asarray(lats, float), np.asarray(lons, float)
     headings, speeds = np.asarray(headings, float), np.asarray(speeds_kmh, float)
 
     fast = np.flatnonzero(speeds > MIN_GATE_SPEED_KMH)
     if len(fast) < 100:
-        raise LapError("на треке нет участка с уверенным движением")
+        raise LapError("the track has no stretch of confident movement")
 
     frame = LocalFrame(float(lats[fast].mean()), float(lons[fast].mean()))
     x, y = frame.to_xy(lats, lons)
@@ -112,7 +112,7 @@ def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
         near = fast[(distance < MATCH_RADIUS_M)]
         near = near[[_bearing_delta(headings[candidate], headings[i]) < MATCH_BEARING_DEG
                      for i in near]]
-        # Соседние сэмплы одного проезда схлопываются в один: считаем только разрывы.
+        # Adjacent samples of one pass collapse into one: only the breaks are counted.
         passes = 1 + int(np.count_nonzero(np.diff(near) > 1)) if len(near) else 0
         if passes > best_count:
             best_count, best_index = passes, int(candidate)
@@ -124,24 +124,24 @@ def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
 def find_crossings(lats, lons, times, gate: Gate, *,
                    half_width_m: float = GATE_HALF_WIDTH_M,
                    min_gap_s: float = MIN_LAP_S) -> list[float]:
-    """Моменты пересечения линии ворот, с точностью лучше шага сэмплов.
+    """Moments of crossing the gate line, resolved finer than the sample step.
 
-    Ворота — отрезок, перпендикулярный курсу проезда. Учитываются только пересечения
-    в правильную сторону: обратный проезд по той же линии кругом не считается.
+    The gate is a segment perpendicular to the direction of travel. Only crossings in the
+    right direction count: driving back over the same line is not a lap.
     """
     frame = LocalFrame(gate.lat, gate.lon)
     x, y = frame.to_xy(lats, lons)
     times = np.asarray(times, float)
 
-    # Направление проезда и перпендикуляр к нему. Курс отсчитывается от севера по
-    # часовой стрелке, отсюда такая пара синус/косинус.
+    # Direction of travel and the perpendicular to it. Heading runs clockwise from north,
+    # hence this sine/cosine pairing.
     heading = math.radians(gate.bearing)
     forward = np.array([math.sin(heading), math.cos(heading)])
     across = np.array([forward[1], -forward[0]])
 
     points = np.column_stack([x, y])
-    along = points @ forward             # знак меняется в момент пересечения
-    lateral = points @ across            # смещение вдоль линии ворот
+    along = points @ forward             # the sign flips at the moment of crossing
+    lateral = points @ across            # displacement along the gate line
 
     crossings: list[float] = []
     sign_change = np.flatnonzero((along[:-1] < 0) & (along[1:] >= 0))
@@ -150,7 +150,7 @@ def find_crossings(lats, lons, times, gate: Gate, *,
         ratio = -along[i] / span if span else 0.0
         offset = lateral[i] + ratio * (lateral[i + 1] - lateral[i])
         if abs(offset) > half_width_m:
-            continue                      # проехал мимо края линии
+            continue                      # passed beyond the end of the line
         moment = float(times[i] + ratio * (times[i + 1] - times[i]))
         if crossings and moment - crossings[-1] < min_gap_s:
             continue
@@ -159,7 +159,7 @@ def find_crossings(lats, lons, times, gate: Gate, *,
 
 
 def split_laps(times, crossings: list[float]) -> list[Lap]:
-    """Круги между соседними пересечениями. Выезд и заезд в круги не попадают."""
+    """Laps between adjacent crossings. Out and in laps are not included."""
     times = np.asarray(times, float)
     laps = []
     for number, (start, end) in enumerate(zip(crossings, crossings[1:]), start=1):
@@ -182,13 +182,13 @@ def _path_length(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 def frenet_project(ref_x: np.ndarray, ref_y: np.ndarray,
                    qx: np.ndarray, qy: np.ndarray,
                    *, chunk: int = 2000) -> tuple[np.ndarray, np.ndarray]:
-    """Проекция точек на эталонную линию: путь вдоль неё и боковое отклонение.
+    """Projects points onto a reference line: distance along it and lateral offset.
 
-    Возвращает ``(s, offset)``. Знак ``offset`` — сторона относительно направления
-    движения эталона: положительный слева, отрицательный справа.
+    Returns ``(s, offset)``. The sign of ``offset`` is the side relative to the
+    reference's direction of travel: positive to the left, negative to the right.
     """
     ref_s = _path_length(ref_x, ref_y)
-    # Касательная эталона в каждой вершине, через центральную разность.
+    # The reference tangent at each vertex, by central difference.
     tx = np.gradient(ref_x)
     ty = np.gradient(ref_y)
     norm = np.hypot(tx, ty)
@@ -203,7 +203,7 @@ def frenet_project(ref_x: np.ndarray, ref_y: np.ndarray,
         dy = qy[begin:end, None] - ref_y[None, :]
         nearest = np.argmin(dx * dx + dy * dy, axis=1)
         s_out[begin:end] = ref_s[nearest]
-        # Боковое отклонение — компонента поперёк касательной эталона.
+        # Lateral offset is the component across the reference tangent.
         off_out[begin:end] = (dx[np.arange(end - begin), nearest] * (-ty[nearest])
                               + dy[np.arange(end - begin), nearest] * tx[nearest])
     return s_out, off_out
@@ -211,14 +211,14 @@ def frenet_project(ref_x: np.ndarray, ref_y: np.ndarray,
 
 def build_envelope(lats, lons, laps: list[Lap], *, bins: int = 400
                    ) -> tuple[list[list[float]], list[list[float]]]:
-    """Полоса, которую занимают все круги сессии.
+    """The band that all laps of the session occupy.
 
-    Возвращает две линии в координатах ``[lat, lon]`` — левый и правый край полосы.
-    За эталон берётся самый быстрый круг: его траектория ближе всего к тому, что
-    стоит показывать как основную линию.
+    Returns two lines in ``[lat, lon]`` coordinates — the left and right edge of the band.
+    The fastest lap serves as the reference: its trajectory is closest to what is worth
+    showing as the main line.
     """
     if not laps:
-        raise LapError("без кругов огибающую не построить")
+        raise LapError("no laps, so no envelope")
 
     lats, lons = np.asarray(lats, float), np.asarray(lons, float)
     frame = LocalFrame(float(lats.mean()), float(lons.mean()))
@@ -228,7 +228,7 @@ def build_envelope(lats, lons, laps: list[Lap], *, bins: int = 400
     ref_x = x[reference.index_start:reference.index_end]
     ref_y = y[reference.index_start:reference.index_end]
     if len(ref_x) < 10:
-        raise LapError("эталонный круг слишком короткий")
+        raise LapError("the reference lap is too short")
     ref_s = _path_length(ref_x, ref_y)
 
     edges = np.linspace(0.0, ref_s[-1], bins + 1)
@@ -245,10 +245,10 @@ def build_envelope(lats, lons, laps: list[Lap], *, bins: int = 400
         np.minimum.at(low, slot, offset)
         np.maximum.at(high, slot, offset)
 
-    # Корзины, куда не попало ни одной точки, берут значение соседей.
+    # Bins that caught no points take the value of their neighbours.
     valid = np.isfinite(low) & np.isfinite(high)
     if not valid.any():
-        raise LapError("круги не проецируются на эталон")
+        raise LapError("the laps do not project onto the reference")
     index = np.arange(bins)
     low = np.interp(index, index[valid], low[valid])
     high = np.interp(index, index[valid], high[valid])
@@ -260,7 +260,7 @@ def build_envelope(lats, lons, laps: list[Lap], *, bins: int = 400
     ty = np.gradient(base_y)
     norm = np.hypot(tx, ty)
     norm[norm == 0] = 1.0
-    nx, ny = -ty / norm, tx / norm       # единичная нормаль слева от направления
+    nx, ny = -ty / norm, tx / norm       # unit normal to the left of the direction
 
     def to_line(offsets: np.ndarray) -> list[list[float]]:
         lon, lat = frame.to_lonlat(base_x + nx * offsets, base_y + ny * offsets)
