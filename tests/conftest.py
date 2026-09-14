@@ -26,3 +26,20 @@ def require_data(*names: str) -> list[Path]:
     if missing:
         pytest.skip(f"нет исходных файлов: {', '.join(missing)}")
     return paths
+
+
+@pytest.fixture(scope="session")
+def rb_lean() -> Path:
+    """Выгрузка RaceBox с Bike Mode: есть LeanAngle, нет бокового G."""
+    return FIXTURES / "racebox_lean_head.csv"
+
+
+@pytest.fixture(scope="session")
+def rb_cornering() -> Path:
+    """Та же сессия без Bike Mode: есть GForceY, нет угла наклона."""
+    return FIXTURES / "racebox_cornering_head.csv"
+
+
+@pytest.fixture(scope="session")
+def rb_vbo() -> Path:
+    return FIXTURES / "racebox_head.vbo"
