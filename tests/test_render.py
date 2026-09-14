@@ -184,3 +184,69 @@ def test_parse_progress_ignores_other_lines(line):
 
 def test_parse_progress_without_duration():
     assert parse_progress("out_time_ms=1000", 0.0) is None
+
+
+# --- cutting stretches out ---------------------------------------------------
+
+def test_without_ranges_nothing_is_trimmed(tmp_path):
+    plan = build_plan(SESSION, LAYOUT, None, tmp_path / "out.mp4")
+    assert "trim=" not in graph_of(plan)
+    assert plan.duration_s == 300.0
+
+
+def test_a_single_range_trims_the_ends(tmp_path):
+    """The case that prompted this: a long in-lap and a long cool-down."""
+    layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    graph = graph_of(plan)
+    assert "trim=start=40.000:end=250.000" in graph
+    assert plan.duration_s == pytest.approx(210.0)
+
+
+def test_two_ranges_are_concatenated(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 0, "to": 40}, {"from": 60, "to": 300}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    graph = graph_of(plan)
+    assert "concat=n=2:v=1:a=1" in graph
+    assert "split=2" in graph and "asplit=2" in graph
+    assert plan.duration_s == pytest.approx(280.0)
+
+
+def test_ranges_are_sorted_and_merged(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 200, "to": 300}, {"from": 0, "to": 100},
+                                   {"from": 100, "to": 150}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    # The first two touch and fold into one, leaving two stretches in order.
+    assert "concat=n=2" in graph_of(plan)
+    assert plan.duration_s == pytest.approx(250.0)
+
+
+def test_ranges_are_clamped_to_the_session(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": -50, "to": 9999}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    assert plan.duration_s == pytest.approx(300.0)
+
+
+def test_empty_ranges_mean_keep_everything(tmp_path):
+    """A layout saved before ranges existed must still render in full."""
+    for value in ([], None):
+        plan = build_plan(SESSION, {**LAYOUT, "ranges": value}, None, tmp_path / "out.mp4")
+        assert plan.duration_s == 300.0
+
+
+def test_trimmed_audio_comes_through_the_graph(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    maps = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-map"]
+    assert "[ca]" in maps
+    assert "atrim=start=40.000" in graph_of(plan)
+
+
+def test_the_output_duration_drives_the_length_limit(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 100, "to": 160}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    # The first -t sizes the black base, which must still span the whole session; the
+    # last one caps the output, and that is what shrinks with the ranges.
+    limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
+    assert limits[0] == "300.000"
+    assert limits[-1] == "60.000"

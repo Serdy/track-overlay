@@ -46,15 +46,20 @@ const ExportUI = (function () {
    * `duration` limits the render to the first N seconds, which is how a layout gets
    * checked without waiting for the full session.
    */
-  async function run({ output, drawFrame, duration, name, onStage, onProgress, signal }) {
+  async function run({ output, drawFrame, duration, name, kept, toSession,
+                       onStage, onProgress, signal }) {
     const width = output.width;
     const height = output.height;
     const fps = output.fps;
-    const to = duration || output.duration;
+    const to = duration || kept || output.duration;
 
     onStage('rendering the telemetry layer');
+    // Frames run in output time while telemetry is addressed in session time, and the
+    // two part company as soon as anything is cut out.
+    const map = toSession || ((t) => t);
     const blob = await OverlayExport.render({
-      width, height, fps, from: 0, to, drawFrame, signal,
+      width, height, fps, from: 0, to, signal,
+      drawFrame: (ctx, t, frame) => drawFrame(ctx, map(t), frame),
       onProgress: (done) => onProgress(done * OVERLAY_SHARE),
     });
 

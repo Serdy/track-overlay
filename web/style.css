@@ -224,3 +224,18 @@ code { font-variant-numeric: tabular-nums; }
 }
 
 #overlay.dragging { cursor: grabbing; }
+
+/* Stretches that will not reach the finished video. */
+.gaps { position: absolute; inset: 0; pointer-events: none; }
+
+.gaps i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    45deg, rgba(255,255,255,0.06) 0 4px, rgba(0,0,0,0.35) 4px 8px);
+  border-left: 1px solid rgba(255,255,255,0.25);
+  border-right: 1px solid rgba(255,255,255,0.25);
+}
+
+.transport button.cutting { border-color: #f5bc00; color: #f5bc00; }

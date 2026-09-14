@@ -89,6 +89,28 @@ def _even(value: float) -> int:
     return max(2, int(round(value / 2)) * 2)
 
 
+def _keep_ranges(layout: dict, duration: float) -> list[tuple[float, float]]:
+    """The stretches of the session that make it into the video.
+
+    Mirrors ``Ranges.normalise`` in the browser. Absent or empty means keep everything —
+    a layout from before this feature existed must still render.
+    """
+    raw = layout.get("ranges")
+    if not raw:
+        return [(0.0, duration)]
+    clean = sorted(
+        (max(0.0, float(r["from"])), min(duration, float(r["to"]))) for r in raw)
+    merged: list[list[float]] = []
+    for start, end in clean:
+        if end - start <= 1e-6:
+            continue
+        if merged and start <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(a, b) for a, b in merged] or [(0.0, duration)]
+
+
 def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
                *, bitrate: str = DEFAULT_BITRATE, duration_s: float | None = None) -> Plan:
     """Assembles the ffmpeg argument list without running anything."""
@@ -159,14 +181,39 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
         steps.append(f"{label}[ov]overlay=0:0[out]")
         label = "[out]"
 
-    args += ["-filter_complex", ";".join(steps), "-map", label]
-
     # Audio comes whole from the camera that opens the session — no mixing in v1.
     opening = spans[0]["clip"]
-    args += ["-map", f"{index[opening]}:a?", "-c:a", AUDIO_CODEC, "-b:a", "192k"]
+    audio_label = f"[{index[opening]}:a]"
+    # Without trimming the audio never enters the graph, and a filter label is not a
+    # valid -map target for a plain input stream.
+    audio_map = f"{index[opening]}:a?"
+
+    # Cut stretches out by trimming the finished composite and concatenating what is
+    # left. Doing it here, after compositing, means the cuts apply to every camera and to
+    # the overlay at once, without repeating the trim on each input.
+    kept = _keep_ranges(layout, total)
+    output_duration = sum(end - start for start, end in kept)
+    if len(kept) > 1 or kept[0] != (0.0, total):
+        # trim needs several reads of the same stream, so both are split first.
+        steps.append(f"{label}split={len(kept)}"
+                     + "".join(f"[sv{n}]" for n in range(len(kept))))
+        steps.append(f"{audio_label}asplit={len(kept)}"
+                     + "".join(f"[sa{n}]" for n in range(len(kept))))
+        pieces = []
+        for n, (start, end) in enumerate(kept):
+            steps.append(f"[sv{n}]trim=start={start:.3f}:end={end:.3f},"
+                         f"setpts=PTS-STARTPTS[kv{n}]")
+            steps.append(f"[sa{n}]atrim=start={start:.3f}:end={end:.3f},"
+                         f"asetpts=PTS-STARTPTS[ka{n}]")
+            pieces.append(f"[kv{n}][ka{n}]")
+        steps.append(f"{''.join(pieces)}concat=n={len(kept)}:v=1:a=1[cv][ca]")
+        label, audio_map = "[cv]", "[ca]"
+
+    args += ["-filter_complex", ";".join(steps), "-map", label, "-map", audio_map]
+    args += ["-c:a", AUDIO_CODEC, "-b:a", "192k"]
     args += ["-c:v", VIDEO_CODEC, "-b:v", bitrate, "-r", str(fps),
-             "-t", f"{total:.3f}", "-pix_fmt", "yuv420p", str(output)]
-    return Plan(args=args, duration_s=total, inputs=inputs)
+             "-t", f"{output_duration:.3f}", "-pix_fmt", "yuv420p", str(output)]
+    return Plan(args=args, duration_s=output_duration, inputs=inputs)
 
 
 def prepare_clips(session: dict, workdir: Path) -> dict:

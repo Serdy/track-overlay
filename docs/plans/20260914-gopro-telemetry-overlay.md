@@ -575,9 +575,31 @@ through `-itsoffset` on the input, and audio is taken whole from one chosen came
 - [x] an export button in the UI: render the overlay in the browser, then run ffmpeg, then
       show the path to the finished file
 - [x] cancelling a running render
-- [ ] a golden smoke test: render 10 seconds of session 3429 end to end
+- [x] a golden smoke test: render 10 seconds of session 3429 end to end
 - [x] tests: parsing progress from ffmpeg output; behaviour on a non-zero exit code;
       cancellation killing the process
+- [x] run the tests — they must pass before task 19
+
+### Task 18a: ➕ Cutting stretches out
+
+Added after the plan was written: a long ride out to the track and back was ending up in
+every export.
+
+**Files:**
+- Create: `web/js/ranges.js`
+- Create: `web/test/ranges.test.js`
+- Modify: `src/trackoverlay/render.py`, `web/js/state.js`, `web/js/export_ui.js`
+
+- [x] model the kept stretches, not the holes — trimming the ends is then one range and
+      dropping a middle piece is two
+- [x] map between output time and session time, since they part company once anything is cut
+- [x] a `laps` button trimming to the timed laps, which is the case that actually comes up
+- [x] grey the dropped stretches on the timeline and step over them during playback
+- [x] trim and concatenate the finished composite in ffmpeg, so the cuts apply to every
+      camera and to the overlay at once
+- [x] flush a pending layout save before exporting: the render reads the file off disk,
+      and browsers throttle timers in a background tab
+- [x] tests: the two time mappings are inverses; cuts split, merge and clamp correctly
 - [x] run the tests — they must pass before task 19
 
 ### Task 19: Verify acceptance criteria

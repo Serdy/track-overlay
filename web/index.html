@@ -41,7 +41,9 @@
     <button id="rate">1×</button>
     <button id="swap" title="Swap main view and inset from here (S)">⇄</button>
     <button id="segment" title="Swap for a stretch: click to mark the start, again to end it (D)">⇄ …</button>
-    <button id="reset" title="Discard every camera switch and return to the default layout">↺</button>
+    <button id="cut" title="Cut a stretch out: click to mark the start, again to end it (X)">✂ …</button>
+    <button id="laps-only" title="Trim to the timed laps, dropping the ride out and back">laps</button>
+    <button id="reset" title="Return everything to the default layout">↺</button>
     <button id="export" title="Compose everything into one video">⬇ Export</button>
     <select id="resolution" title="Output resolution">
       <option value="1280x720">720p</option>
@@ -61,6 +63,7 @@
     </select>
     <div class="timeline" id="timeline">
       <div class="laps" id="lap-marks"></div>
+      <div class="gaps" id="gap-marks"></div>
       <div class="cuts" id="cut-marks"></div>
       <div class="pending" id="pending-range" hidden></div>
       <div class="playhead" id="playhead"></div>
@@ -74,6 +77,7 @@
   <script src="js/clock.js"></script>
   <script src="js/cuts.js"></script>
   <script src="js/layout.js"></script>
+  <script src="js/ranges.js"></script>
   <script src="js/scoring.js"></script>
   <script src="js/display.js"></script>
   <script src="js/webm-muxer.min.js"></script>

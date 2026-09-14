@@ -15,6 +15,7 @@
   let scoreSides = null;
   let layout = null;
   let segmentStart = null;      // set while a stretch is being marked out
+  let segmentAction = null;     // what the second click will do: 'swap' or 'cut'
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -31,7 +32,13 @@
     ],
     output: { width: 1920, height: 1080, fps: 60 },
     nudge_s: 0,
+    ranges: null,               // null means the whole session
   };
+
+  /** The stretches that reach the finished video. */
+  function keptRanges() {
+    return (layout && layout.ranges) || Ranges.full(session.duration);
+  }
 
   const READOUT = [
     { channel: 'speed', label: 'km/h', digits: 0 },
@@ -43,7 +50,8 @@
     for (const id of ['track-name', 'session-info', 'sync-info', 'slots', 'overlay',
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
-                      'swap', 'segment', 'reset', 'cut-marks', 'pending-range',
+                      'swap', 'segment', 'cut', 'laps-only', 'reset',
+                      'cut-marks', 'gap-marks', 'pending-range',
                       'resolution', 'nudge', 'nudge-value',
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result']) {
@@ -78,6 +86,7 @@
     buildLapMarks();
     buildSlots();
     renderCutMarks();
+    renderGapMarks();
     wire();
 
     // Only now, with the readout cells and video tags in place, is it safe to restore
@@ -207,7 +216,8 @@
     dom['cut-marks'].innerHTML = '';
     dom.reset.disabled = layout.cuts.length <= 1
       && JSON.stringify(layout.widgets) === JSON.stringify(DEFAULT_LAYOUT.widgets)
-      && !layout.nudge_s;
+      && !layout.nudge_s
+      && Ranges.total(keptRanges()) >= session.duration - 0.01;
     for (const cut of layout.cuts) {
       if (cut.t <= 0) continue;                  // the opening entry is not a change
       const mark = document.createElement('i');
@@ -228,10 +238,12 @@
   function resetLayout() {
     const switches = Math.max(0, layout.cuts.length - 1);
     const moved = JSON.stringify(layout.widgets) !== JSON.stringify(DEFAULT_LAYOUT.widgets);
-    if (!switches && !moved && !layout.nudge_s) return;
+    const trimmed = Ranges.total(keptRanges()) < session.duration - 0.01;
+    if (!switches && !moved && !layout.nudge_s && !trimmed) return;
 
     const parts = [];
     if (switches) parts.push(`${switches} camera switch(es)`);
+    if (trimmed) parts.push('the trimming');
     if (moved) parts.push('the widget placement');
     if (layout.nudge_s) parts.push('the sync adjustment');
     if (!window.confirm(`Discard ${parts.join(', ')}?`)) return;
@@ -239,7 +251,10 @@
     layout = Object.assign(JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
                            { cuts: Cuts.initial(session.clips.map((clip) => clip.id)) });
     segmentStart = null;
+    segmentAction = null;
     dom.segment.classList.remove('armed');
+    dom.cut.classList.remove('cutting');
+    renderGapMarks();
     dom.nudge.value = '0';
     applyNudge(0);
     dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
@@ -258,22 +273,76 @@
     render(clock.time);
   }
 
-  /** Two clicks: the first marks the start of a stretch, the second closes it. */
-  function toggleSegment() {
+  /**
+   * Two clicks mark out a stretch: the first sets its start, the second closes it and
+   * applies whichever action was armed. Swapping cameras and cutting a piece out both
+   * need the same gesture, so they share it.
+   */
+  function markSegment(action) {
+    const button = action === 'cut' ? dom.cut : dom.segment;
+    const armedClass = action === 'cut' ? 'cutting' : 'armed';
+
+    if (segmentStart !== null && segmentAction !== action) {
+      // Switching intent mid-selection: start over rather than guess.
+      dom.segment.classList.remove('armed');
+      dom.cut.classList.remove('cutting');
+      segmentStart = null;
+    }
     if (segmentStart === null) {
       segmentStart = clock.time;
-      dom.segment.classList.add('armed');
+      segmentAction = action;
+      button.classList.add(armedClass);
       return updatePending();
     }
+
     const [from, to] = [segmentStart, clock.time].sort((a, b) => a - b);
     segmentStart = null;
-    dom.segment.classList.remove('armed');
+    segmentAction = null;
+    button.classList.remove(armedClass);
     updatePending();
     if (to - from < 0.2) return;                 // too short to mean anything
-    layout.cuts = Cuts.swapRange(layout.cuts, from, to);
-    renderCutMarks();
+
+    if (action === 'cut') {
+      layout.ranges = Ranges.cut(keptRanges(), from, to, session.duration);
+      renderGapMarks();
+    } else {
+      layout.cuts = Cuts.swapRange(layout.cuts, from, to);
+      renderCutMarks();
+    }
     saveLayout();
     render(clock.time);
+  }
+
+  function trimToLaps() {
+    layout.ranges = Ranges.lapsOnly(session.laps, session.duration);
+    renderGapMarks();
+    saveLayout();
+    render(clock.time);
+  }
+
+  /** Greys out on the timeline whatever will not reach the video. */
+  function renderGapMarks() {
+    const ranges = keptRanges();
+    dom['gap-marks'].innerHTML = '';
+    for (const gap of Ranges.gaps(ranges, session.duration)) {
+      const mark = document.createElement('i');
+      mark.style.left = `${(gap.from / session.duration) * 100}%`;
+      mark.style.width = `${((gap.to - gap.from) / session.duration) * 100}%`;
+      dom['gap-marks'].appendChild(mark);
+    }
+    const kept = Ranges.total(ranges);
+    dom['laps-only'].disabled = !session.laps.length;
+    dom['session-info'].dataset.kept = kept < session.duration
+      ? ` · ${Clock.formatTime(kept)} kept` : '';
+    describeKept(kept);
+  }
+
+  function describeKept(kept) {
+    const best = SessionModel.bestLap(session);
+    dom['session-info'].textContent =
+      `${session.laps.length} laps`
+      + (best ? ` · best ${Clock.formatTime(best.duration_s)}` : '')
+      + (kept < session.duration - 0.01 ? ` · ${Clock.formatTime(kept)} kept` : '');
   }
 
   function updatePending() {
@@ -410,6 +479,7 @@
                                  { duration: session.duration });
 
     exporting = new AbortController();
+    await flushLayout();
     dom['export-panel'].hidden = false;
     dom['export-result'].textContent = '';
     dom.export.disabled = true;
@@ -421,8 +491,11 @@
     };
 
     try {
+      const ranges = keptRanges();
       const where = await ExportUI.run({
         output,
+        toSession: (outputTime) => Ranges.toSession(ranges, outputTime),
+        kept: Ranges.total(ranges),
         duration: limit || null,
         name: limit ? `preview_${limit}s.mp4` : 'final.mp4',
         drawFrame: paintOverlay,
@@ -442,15 +515,31 @@
 
   let saveTimer = null;
 
+  function writeLayout() {
+    return fetch('/api/layout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(layout),
+    });
+  }
+
   function saveLayout() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      fetch('/api/layout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(layout),
-      }).catch(() => {});
-    }, 400);
+    saveTimer = setTimeout(() => { saveTimer = null; writeLayout().catch(() => {}); }, 400);
+  }
+
+  /**
+   * Writes the layout now, without waiting for the debounce.
+   *
+   * The export reads layout.json off disk, so a pending save has to land first. Waiting
+   * for the timer is not safe: browsers throttle timers in a background tab, and an
+   * export started from one would otherwise render a stale layout.
+   */
+  async function flushLayout() {
+    if (saveTimer === null) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    await writeLayout();
   }
 
   function wire() {
@@ -459,7 +548,9 @@
     dom['next-lap'].addEventListener('click', () => Clock.jumpLap(clock, session.laps, +1));
     dom.rate.addEventListener('click', () => Clock.cycleRate(clock, +1));
     dom.swap.addEventListener('click', swapFromPlayhead);
-    dom.segment.addEventListener('click', toggleSegment);
+    dom.segment.addEventListener('click', () => markSegment('swap'));
+    dom.cut.addEventListener('click', () => markSegment('cut'));
+    dom['laps-only'].addEventListener('click', trimToLaps);
     dom.reset.addEventListener('click', resetLayout);
     dom.export.addEventListener('click', startExport);
 
@@ -505,7 +596,8 @@
         ArrowUp: () => Clock.jumpLap(clock, session.laps, -1),
         ArrowDown: () => Clock.jumpLap(clock, session.laps, +1),
         s: swapFromPlayhead,
-        d: toggleSegment,
+        d: () => markSegment('swap'),
+        x: () => markSegment('cut'),
       };
       const action = actions[event.key];
       if (action) {
@@ -567,7 +659,16 @@
   function tick(now) {
     const elapsed = lastFrame ? (now - lastFrame) / 1000 : 0;
     lastFrame = now;
-    if (clock.playing) Clock.advance(clock, Math.min(elapsed, 0.25));
+    if (clock.playing) {
+      Clock.advance(clock, Math.min(elapsed, 0.25));
+      const ranges = keptRanges();
+      if (!Ranges.isKept(ranges, clock.time)) {
+        // Jump the hole rather than playing through it: the preview is meant to show
+        // what the export will show.
+        const next = ranges.find((range) => range.from > clock.time);
+        Clock.seek(clock, next ? next.from : session.duration);
+      }
+    }
     requestAnimationFrame(tick);
   }
 
