@@ -20,15 +20,17 @@
   // the preview and the render agree across different output resolutions.
   const DEFAULT_LAYOUT = {
     widgets: [
-      { type: 'speed', pos: [0.030, 0.845], scale: 1 },
-      { type: 'lean',  pos: [0.030, 0.725], scale: 1 },
-      { type: 'accel', pos: [0.820, 0.845], scale: 1 },
-      { type: 'map',   pos: [0.820, 0.500], scale: 1 },
+      { type: 'speed', pos: [0.030, 0.860], scale: 1 },
+      { type: 'lean',  pos: [0.030, 0.745], scale: 1 },
+      { type: 'accel', pos: [0.030, 0.675], scale: 1 },
+      { type: 'map',   pos: [0.810, 0.620], scale: 1 },
     ],
     slots: [
       { id: 'main', rect: [0, 0, 1, 1] },
       { id: 'pip', rect: [0.70, 0.04, 0.28, 0.28] },
     ],
+    output: { width: 1920, height: 1080, fps: 60 },
+    nudge_s: 0,
   };
 
   const READOUT = [
@@ -203,7 +205,9 @@
 
   function renderCutMarks() {
     dom['cut-marks'].innerHTML = '';
-    dom.reset.disabled = layout.cuts.length <= 1;
+    dom.reset.disabled = layout.cuts.length <= 1
+      && JSON.stringify(layout.widgets) === JSON.stringify(DEFAULT_LAYOUT.widgets)
+      && !layout.nudge_s;
     for (const cut of layout.cuts) {
       if (cut.t <= 0) continue;                  // the opening entry is not a change
       const mark = document.createElement('i');
@@ -220,18 +224,28 @@
     }
   }
 
-  /**
-   * Throws away every camera switch and returns to the opening arrangement.
-   *
-   * Widget placement is deliberately left alone: a person reaching for reset wants the
-   * cutting undone, not the overlay they spent time positioning.
-   */
-  function resetCuts() {
-    if (layout.cuts.length <= 1) return;
-    if (!window.confirm(`Discard ${layout.cuts.length - 1} camera switch(es)?`)) return;
-    layout.cuts = Cuts.initial(session.clips.map((clip) => clip.id));
+  /** Everything back to how it opens on a fresh session. */
+  function resetLayout() {
+    const switches = Math.max(0, layout.cuts.length - 1);
+    const moved = JSON.stringify(layout.widgets) !== JSON.stringify(DEFAULT_LAYOUT.widgets);
+    if (!switches && !moved && !layout.nudge_s) return;
+
+    const parts = [];
+    if (switches) parts.push(`${switches} camera switch(es)`);
+    if (moved) parts.push('the widget placement');
+    if (layout.nudge_s) parts.push('the sync adjustment');
+    if (!window.confirm(`Discard ${parts.join(', ')}?`)) return;
+
+    layout = Object.assign(JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
+                           { cuts: Cuts.initial(session.clips.map((clip) => clip.id)) });
     segmentStart = null;
     dom.segment.classList.remove('armed');
+    dom.nudge.value = '0';
+    applyNudge(0);
+    dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
+
+    invalidateMap();
+    for (const slot of videos) slot.slot = null;
     renderCutMarks();
     saveLayout();
     render(clock.time);
@@ -446,7 +460,7 @@
     dom.rate.addEventListener('click', () => Clock.cycleRate(clock, +1));
     dom.swap.addEventListener('click', swapFromPlayhead);
     dom.segment.addEventListener('click', toggleSegment);
-    dom.reset.addEventListener('click', resetCuts);
+    dom.reset.addEventListener('click', resetLayout);
     dom.export.addEventListener('click', startExport);
 
     dom.overlay.classList.add('editing');

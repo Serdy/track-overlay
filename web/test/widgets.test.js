@@ -90,11 +90,33 @@ test('the lean bar stays inside the widget', () => {
 
 test('the acceleration bar stays inside the widget', () => {
   const ctx = fakeCtx();
-  Widgets.get('accel').draw(ctx, BOX, { score: -50, accel: -9 });
-  for (const call of ctx.calls.filter((c) => c.name === 'fillRect')) {
+  ctx.roundRect = undefined;                 // exercise the rect fallback path
+  Widgets.get('accel').draw(ctx, BOX, { score: -50 });
+  for (const call of ctx.calls.filter((c) => c.name === 'fillRect' || c.name === 'rect')) {
     const [x, , w] = call.args;
     assert.ok(x >= BOX.x - 1 && x + w <= BOX.x + BOX.w + 1);
   }
+});
+
+test('the acceleration widget shows no number', () => {
+  // A G reading at two decimals changed 17.6 times a second — 29% of frames at 60 fps.
+  // The bar carries the same information without the flicker.
+  const ctx = fakeCtx();
+  Widgets.get('accel').draw(ctx, BOX, { score: 0.26, accel: 0.26, scoreSide: 1 });
+  const texts = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.deepStrictEqual(texts, ['POWER']);
+  assert.ok(!texts.some((t) => /\d/.test(t)), 'no digits should be drawn');
+});
+
+test('the acceleration label names all three states', () => {
+  const read = (scoreSide) => {
+    const ctx = fakeCtx();
+    Widgets.get('accel').draw(ctx, BOX, { score: 0, scoreSide });
+    return ctx.calls.find((c) => c.name === 'fillText').args[0];
+  };
+  assert.strictEqual(read(1), 'POWER');
+  assert.strictEqual(read(-1), 'BRAKING');
+  assert.strictEqual(read(0), 'COASTING');
 });
 
 test('drawAll skips unknown types without dropping the rest', () => {
