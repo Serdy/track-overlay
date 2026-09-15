@@ -6,6 +6,7 @@ global.Widgets = Widgets;
 require('../js/widgets/speed.js');
 require('../js/widgets/lean.js');
 require('../js/widgets/accel.js');
+require('../js/widgets/laptime.js');
 
 /** Fake canvas context: records calls and catches non-finite coordinates. */
 function fakeCtx() {
@@ -34,7 +35,8 @@ const FRAME = { width: 1920, height: 1080 };
 
 test('the registry knows the widgets and invents none', () => {
   // The map require sits further down the file but runs on load, before any test body.
-  assert.deepStrictEqual(Widgets.ids().sort(), ['accel', 'lean', 'map', 'speed']);
+  assert.deepStrictEqual(Widgets.ids().sort(),
+                         ['accel', 'laptime', 'lean', 'map', 'speed']);
   assert.strictEqual(Widgets.get('no such thing'), null);
 });
 
@@ -129,6 +131,7 @@ test('drawAll skips unknown types without dropping the rest', () => {
 // --- map -------------------------------------------------------------------
 
 require('../js/widgets/map.js');
+require('../js/widgets/laptime.js');
 
 const ENVELOPE = {
   left: [[48.000, 17.000], [48.010, 17.000], [48.010, 17.020], [48.000, 17.020]],
@@ -207,4 +210,38 @@ test('the map survives a missing position and trail', () => {
   ctx.closePath = () => {}; ctx.stroke = () => {}; ctx.arc = () => {};
   const prepared = Widgets.get('map').prepare(MAP_SESSION, MAP_BOX);
   Widgets.get('map').draw(ctx, MAP_BOX, { map: prepared, lat: null, lon: null, trail: [] });
+});
+
+
+test('the lap board draws best, previous, current and the delta', () => {
+  const ctx = fakeCtx();
+  Widgets.get('laptime').draw(ctx, { x: 0, y: 0, w: 880, h: 90 }, {
+    laps: {
+      best: { n: 2, time: 63.74 },
+      previous: { n: 3, time: 64.9 },
+      current: { n: 4, time: 39.9 },
+      delta: -3.76,
+    },
+  });
+  const text = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.ok(text.includes('1:03.7'), text.join(' '));
+  assert.ok(text.includes('39.9'));
+  assert.ok(text.includes('-3.76'));
+  assert.ok(text.includes('Best') && text.includes('Previous') && text.includes('Current'));
+});
+
+test('the lap board holds its shape before the first lap is complete', () => {
+  const ctx = fakeCtx();
+  Widgets.get('laptime').draw(ctx, { x: 0, y: 0, w: 880, h: 90 }, {
+    laps: { best: null, previous: null, current: { n: 1, time: 12.3 }, delta: null },
+  });
+  const text = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.strictEqual(text.filter((t) => t === '—').length, 3);   // best, previous, delta
+  assert.ok(text.includes('12.3'));
+});
+
+test('a lap board with no data at all still draws', () => {
+  const ctx = fakeCtx();
+  Widgets.get('laptime').draw(ctx, { x: 0, y: 0, w: 880, h: 90 }, {});
+  assert.ok(ctx.calls.length > 0);
 });

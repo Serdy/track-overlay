@@ -23,7 +23,8 @@ you set up once and reuse for every session of the day.
 - Aligns the two on one timeline, to better than a frame at 60 fps
 - Finds the start/finish line and splits the session into laps, with no external track
   database
-- Draws four widgets: speed, lean angle, acceleration/braking, and a map of the circuit
+- Draws five widgets: speed, lean angle, acceleration/braking, a map of the circuit, and
+  a lap board — best, previous and current lap with a live delta to the best
   built from your own GPS trace
 - Composes any number of cameras with picture-in-picture, lets you swap them over a
   stretch, and cut the ride out and back off the ends
@@ -282,7 +283,10 @@ web/
   js/cuts.js          which camera is in which slot, and when that changes
   js/ranges.js        which parts of the session reach the video
   js/display.js       turning noisy channels into numbers that hold still
-  js/widgets/         speed, lean, acceleration, map
+  js/laptimes.js      lap times and the delta measured at equal distance
+  js/history.js       undo and redo over layout snapshots
+  js/filmstrip.js     where the timeline thumbnails go, and in what order
+  js/widgets/         speed, lean, acceleration, map, lap board
   js/export_overlay.js  the telemetry layer, through WebCodecs
 ```
 

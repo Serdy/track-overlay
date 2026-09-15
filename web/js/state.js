@@ -32,6 +32,7 @@
   let stripToken = 0;           // cancels a filmstrip build that has been overtaken
   let stripTimer = null;
   let lastWheel = 0;
+  let lapModel = null;
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -41,6 +42,7 @@
       { type: 'lean',  pos: [0.030, 0.745], scale: 1 },
       { type: 'accel', pos: [0.030, 0.675], scale: 1 },
       { type: 'map',   pos: [0.810, 0.620], scale: 1 },
+      { type: 'laptime', pos: [0.270, 0.040], scale: 1 },
     ],
     slots: [
       { id: 'main', rect: [0, 0, 1, 1] },
@@ -108,6 +110,9 @@
     leanDisplay = session.channels.lean
       ? Display.lean(session.channels.lean.samples, session.rate) : null;
     scoreSides = scores ? Display.scoreSide(scores) : null;
+    // Distance-to-time for the best lap, worked out once: it is a pass over the whole
+    // distance channel and the reference lap does not change while the session is open.
+    lapModel = LapTimes.build(session);
     layout = await loadLayout();
 
     // Keep the automatic offset so the manual slider shifts from it, not from zero.
@@ -159,6 +164,11 @@
       // A camera added since this layout was saved has to be given somewhere to appear.
       const merged = Object.assign({}, fallback, saved,
                                    { cuts: Cuts.simplify(Cuts.adopt(cuts, [...known])) });
+      // A widget that did not exist when this layout was saved would otherwise never
+      // appear, and there is no way in the editor to add one by hand.
+      const placed = new Set((merged.widgets || []).map((widget) => widget.type));
+      merged.widgets = [...merged.widgets,
+                        ...DEFAULT_LAYOUT.widgets.filter((w) => !placed.has(w.type))];
       const checked = Layout.validate(merged, [...known], widgetSizes());
       if (!checked.ok) console.warn('layout repaired:', checked.errors.join('; '));
       return checked.layout;
@@ -870,6 +880,7 @@
     }
     if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
 
+    data.laps = LapTimes.stateAt(lapModel, session, time);
     data.map = prepareMap(frame);
     data.trail = trailFor(time);
     Widgets.drawAll(ctx, layout.widgets, frame, data);
