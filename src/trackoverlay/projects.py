@@ -262,6 +262,21 @@ def remove_source(project: Project, path: Path) -> Project:
     return write(replace(project, registered=kept))
 
 
+def resolve_source(path: Path | str, root: Path) -> Path:
+    """A source file, looked for beside the project when its recorded path is gone.
+
+    Sessions store the paths the files had when they were built, and those do not survive
+    the folder being moved, copied to another machine, or mounted into a container at a
+    different place. Anything sitting in the project folder is found again by name, which
+    is what makes a project folder portable; files kept elsewhere on disk are not.
+    """
+    given = Path(path)
+    if given.exists():
+        return given
+    beside = root / given.name
+    return beside if beside.exists() else given
+
+
 def resolve_output(project: Project, name: str) -> Path:
     """A produced file by bare name, proven to be inside `out/`."""
     if not name or "/" in name or "\\" in name or name.startswith("."):

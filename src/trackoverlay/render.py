@@ -13,13 +13,14 @@ rendered, which is why nothing here draws: this module only cuts, scales and enc
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VIDEO_CODEC = "h264_videotoolbox"    # hardware encoder on macOS
 AUDIO_CODEC = "aac"
 DEFAULT_BITRATE = "40M"
 PROGRESS = re.compile(r"out_time_ms=(\d+)")
@@ -27,6 +28,20 @@ PROGRESS = re.compile(r"out_time_ms=(\d+)")
 
 class RenderError(Exception):
     """The layout cannot be turned into a render."""
+
+
+def video_codec() -> str:
+    """The H.264 encoder to use here.
+
+    VideoToolbox is several times faster than libx264 on a Mac and is the reason a full
+    session renders in minutes, but it exists nowhere else - in a container, or on Linux,
+    asking for it fails outright rather than falling back. `TRACKOVERLAY_CODEC` overrides
+    both, for anyone with an NVENC or QSV box.
+    """
+    chosen = os.environ.get("TRACKOVERLAY_CODEC")
+    if chosen:
+        return chosen
+    return "h264_videotoolbox" if sys.platform == "darwin" else "libx264"
 
 
 @dataclass
@@ -294,21 +309,33 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
 
     args += ["-filter_complex", ";".join(steps), "-map", label, "-map", audio_map]
     args += ["-c:a", AUDIO_CODEC, "-b:a", "192k"]
-    args += ["-c:v", VIDEO_CODEC, "-b:v", bitrate, "-r", str(fps),
+    args += ["-c:v", video_codec(), "-b:v", bitrate, "-r", str(fps),
              "-t", f"{output_duration:.3f}", "-pix_fmt", "yuv420p", str(output)]
     return Plan(args=args, duration_s=output_duration, inputs=inputs)
 
 
-def prepare_clips(session: dict, workdir: Path) -> dict:
+def prepare_clips(session: dict, workdir: Path, root: Path | None = None) -> dict:
     """Writes a concat list for every clip split into chunks.
 
     Returned as a copy of the session so the file on disk keeps holding only real data —
     the concat lists are a detail of one render, not part of the session.
+
+    `root` is the project folder. Paths that no longer resolve are looked for in it by
+    name, so a project built on one machine still renders after being moved or mounted
+    somewhere else.
     """
+    from .projects import resolve_source
+
     workdir.mkdir(parents=True, exist_ok=True)
+    here = root or workdir.parent
     prepared = json.loads(json.dumps(session))
     for clip in prepared.get("clips", []):
-        files = clip.get("files") or []
+        files = [str(resolve_source(f, here)) for f in clip.get("files") or []]
+        if files:
+            clip["files"] = files
+        proxies = clip.get("proxy")
+        if proxies:
+            clip["proxy"] = [str(resolve_source(f, here)) for f in proxies]
         if len(files) <= 1:
             continue
         listing = workdir / f"concat_{clip['id']}.txt"

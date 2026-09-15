@@ -349,3 +349,22 @@ def test_the_legacy_session_argument_still_serves_the_editor(legacy):
 
 def test_the_legacy_mode_still_serves_media(legacy):
     assert fetch(legacy, "/media/cam_1/0").read() == MEDIA
+
+
+def test_the_page_is_told_what_this_machine_can_do(live):
+    """In a container there is no file dialog to open, and a button that can only fail is
+    worse than no button."""
+    able = json.load(fetch(live.base, "/api/capabilities"))
+    assert set(able) == {"file_dialog", "reveal", "data_root"}
+    assert able["data_root"] == str(live.root)
+
+
+def test_media_is_found_beside_the_project_when_its_path_moved(live):
+    """The container case: the session names /Users/..., the footage arrives at /data."""
+    session = live.folder / "session.json"
+    payload = json.loads(session.read_text())
+    payload["clips"][0]["files"] = ["/gone/demo.mp4"]
+    payload["clips"][0]["proxy"] = ["/gone/demo.lrv"]
+    session.write_text(json.dumps(payload))
+
+    assert fetch(live.url("/media/cam_1/0")).read() == MEDIA

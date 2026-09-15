@@ -23,11 +23,10 @@ you set up once and reuse for every session of the day.
 - Aligns the two on one timeline, to better than a frame at 60 fps
 - Finds the start/finish line and splits the session into laps, with no external track
   database
-- Draws six widgets: speed, lean angle, acceleration/braking, a map of the circuit, a lap
-  board (best, previous and current with a live delta) and a lap list. "Best" means the
-  best lap finished by that point in the session, so both read the way they would have on
-  the bike rather than knowing the session in advance
-  built from your own GPS trace
+- Draws six widgets: speed, lean angle, acceleration/braking, a map of the circuit built
+  from your own GPS trace, a lap board (best, previous and current with a live delta) and
+  a lap list. "Best" means the best lap finished by that point in the session, so both
+  read the way they would have on the bike rather than knowing the session in advance
 - Composes any number of cameras with picture-in-picture, lets you swap them over a
   stretch, and cut the ride out and back off the ends
 - Renders the lot into a single MP4 with hardware encoding
@@ -68,21 +67,29 @@ quick.
 
 ## Requirements
 
-- ffmpeg 7 or newer (`ffprobe` too — it ships alongside)
-- Python 3.12, managed through [uv](https://docs.astral.sh/uv/)
-- A browser with WebCodecs: Chrome, Edge or a recent Safari
-- macOS gets hardware encoding through VideoToolbox; elsewhere change `VIDEO_CODEC` in
-  `src/trackoverlay/render.py`
+A browser with WebCodecs — Chrome, Edge or a recent Safari — and then either Docker, or
+ffmpeg 7 with Python 3.12 through [uv](https://docs.astral.sh/uv/). The encoder is chosen
+for the machine: VideoToolbox on macOS, libx264 elsewhere, or whatever
+`TRACKOVERLAY_CODEC` names.
 
 ## Getting started
+
+With Docker, nothing else to install:
+
+```bash
+docker run --rm -p 8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
+```
+
+Or from a checkout:
 
 ```bash
 uv sync
 uv run trackoverlay
 ```
 
-That opens the browser on the project list. Everything else happens there — there is no
-step that has to be done from a terminal first.
+Either way, open <http://127.0.0.1:8712/> and everything happens there: making a project,
+pointing it at files, building the session, checking the sync, arranging the layout and
+exporting. Nothing has to be run from a terminal first.
 
 ### 1. Make a project
 
@@ -101,7 +108,8 @@ Press **New project**, name it, then **Add files…**. That opens the macOS file
 notes down the paths — nothing is copied, because the server reads the same disk the
 camera card is on and pushing twenty-four gigabytes through a browser to reach it would
 be pure waste. Files dropped into the folder by hand are picked up as well, so a project
-can also be assembled in Finder.
+can also be assembled in Finder — which is how it works under Docker, where there is no
+system dialog to open and the panel says so.
 
 Select every chunk of a GoPro recording (`GH013429.MP4`, `GH023429.MP4`, …): they are one
 clip split at four gigabytes and are joined back together automatically. More files can be
@@ -134,27 +142,6 @@ slider shifts one camera; **Looks right** confirms it.
 A confirmed correction is kept in `project.json` and folded into `session.json`, which is
 what the renderer reads — so unlike the old preview-only slider, it reaches the finished
 video. It also survives a rebuild.
-
-### From a script instead
-
-The command line still does the same work, which is what CI runs:
-
-```bash
-uv run trackoverlay build data/slovakia-ring-2026-09-12/*.csv \
-    data/slovakia-ring-2026-09-12/*.MP4 \
-    --track "Slovakia Ring" -o data/slovakia-ring-2026-09-12/session.json
-```
-
-```
-session: 25.0 Hz, 40420 samples, 8 laps, best 2:40.349
-  ✓ cam_3429: starts -116.14 s, 28.9 min, sync xcorr (corr 0.9997)
-  ✓ cam_3446: starts -115.26 s, 11.8 min, sync xcorr (corr 0.9976)
-written: data/slovakia-ring-2026-09-12/session.json
-```
-
-The tick means the video was aligned by correlating its own GPS speed against the
-logger's. A `!` means it fell back to UTC alone — which happens when the camera never
-caught satellites, and is still workable from the sync panel.
 
 ### 3. Arrange and export
 
@@ -200,6 +187,47 @@ P=data/slovakia-ring-2026-09-12
 uv run trackoverlay render "$P/session.json" "$P/layout.json" \
     --overlay "$P/out/overlay.mp4" -o "$P/out/final.mp4"
 ```
+
+### Docker
+
+```bash
+docker run --rm -p 8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
+```
+
+The image carries ffmpeg and the tool, and no data: `-v` decides which track days it can
+see. Put the footage and the RaceBox exports in `data/<project>/` — inside the container
+there is no file dialog, so a project is assembled by dropping files into its folder.
+
+The image is built for amd64 and arm64 on every push to `main` and published to the GitHub
+Container Registry; `:latest` tracks `main`, and version tags are published for releases.
+
+Two things worth knowing. Rendering uses libx264 in the container, since VideoToolbox is
+macOS-only and would fail rather than fall back — pass `-e TRACKOVERLAY_CODEC=h264_nvenc`
+on a box with something faster. And a project folder is portable: a session built on the
+host still plays and renders when mounted somewhere else, because files are looked for
+beside the project when their recorded path is gone. Footage kept *outside* the project
+folder does not travel, so mount it at the same path or keep it inside.
+
+### From a script instead
+
+The command line still does the same work, which is what CI runs:
+
+```bash
+uv run trackoverlay build data/slovakia-ring-2026-09-12/*.csv \
+    data/slovakia-ring-2026-09-12/*.MP4 \
+    --track "Slovakia Ring" -o data/slovakia-ring-2026-09-12/session.json
+```
+
+```
+session: 25.0 Hz, 40420 samples, 8 laps, best 2:40.349
+  ✓ cam_3429: starts -116.14 s, 28.9 min, sync xcorr (corr 0.9997)
+  ✓ cam_3446: starts -115.26 s, 11.8 min, sync xcorr (corr 0.9976)
+written: data/slovakia-ring-2026-09-12/session.json
+```
+
+The tick means the video was aligned by correlating its own GPS speed against the
+logger's. A `!` means it fell back to UTC alone — which happens when the camera never
+caught satellites, and is still workable from the sync panel.
 
 ## Tools
 
@@ -278,8 +306,9 @@ src/trackoverlay/
   sync.py             UTC, then cross-correlation, then a manual slider
   laps.py             gates, laps, and the envelope of trajectories
   session.py          assembling session.json
+  projects.py         a folder per track day: sources, artifacts, the confirmed sync
   render.py           the ffmpeg filter graph
-  server.py           range requests, and launching renders
+  server.py           project routes, range requests, and launching renders
 web/
   js/clock.js         the single source of the current time
   js/session.js       the session model and channel sampling

@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.pytest_cache
+__pycache__
+.playwright-cli
+data
+data_bak
+out
+docs
+tests
+tools
+*.MP4
+*.LRV
+*.THM

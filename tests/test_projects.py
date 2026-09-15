@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -249,3 +250,20 @@ def test_a_card_for_an_unbuilt_project(tmp_path):
 
     assert card["built"] is False
     assert (card["videos"], card["telemetry"]) == (0, 1)
+
+
+def test_a_moved_project_finds_its_own_files_again(tmp_path):
+    """A session records the paths files had when it was built. Mounting the folder into
+    a container puts them somewhere else entirely, and only the folder travels."""
+    project = projects.create(tmp_path, "Day")
+    video = project.root / "GH013429.MP4"
+    video.write_bytes(b"x")
+
+    recorded = "/somewhere/that/is/gone/GH013429.MP4"
+    assert projects.resolve_source(recorded, project.root) == video
+
+
+def test_a_file_that_was_never_in_the_project_is_left_alone(tmp_path):
+    project = projects.create(tmp_path, "Day")
+    missing = Path("/elsewhere/GH013429.MP4")
+    assert projects.resolve_source(missing, project.root) == missing

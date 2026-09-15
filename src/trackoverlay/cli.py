@@ -44,10 +44,10 @@ def _serve(args: argparse.Namespace) -> int:
     if args.session is not None:
         if not args.session.exists():
             raise SessionError(f"no such file {args.session} — run build first")
-        serve(args.data, session_path=args.session, port=args.port,
+        serve(args.data, session_path=args.session, port=args.port, host=args.host,
               open_browser=not args.no_browser)
         return 0
-    serve(args.data, project=args.project, port=args.port,
+    serve(args.data, project=args.project, port=args.port, host=args.host,
           open_browser=not args.no_browser)
     return 0
 
@@ -65,7 +65,8 @@ def _render(args: argparse.Namespace) -> int:
         # The editor writes whichever container the browser managed to encode.
         overlay = next((p for p in sorted(args.session.parent.glob("overlay.*"))), None)
 
-    prepared = render_module.prepare_clips(session, args.output.parent / "work")
+    prepared = render_module.prepare_clips(session, args.output.parent / "work",
+                                           args.session.parent)
     plan = render_module.build_plan(prepared, layout, overlay, args.output,
                                     duration_s=args.duration)
     print(f"rendering {plan.duration_s / 60:.1f} min from {len(plan.inputs)} input(s)"
@@ -103,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="where projects live (default: data/)")
     run.add_argument("--project", default=None, help="open this project straight away")
     run.add_argument("-p", "--port", type=int, default=8712)
+    run.add_argument("--host", default="127.0.0.1",
+                     help="address to bind; the container image passes 0.0.0.0")
     run.add_argument("--no-browser", action="store_true")
     run.set_defaults(func=_serve)
 

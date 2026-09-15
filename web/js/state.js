@@ -33,6 +33,7 @@
   let stripTimer = null;
   let lastWheel = 0;
   let lapModel = null;
+  let able = { file_dialog: true, reveal: true, data_root: 'data' };
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -82,7 +83,7 @@
                       'picker-add', 'picker-chosen', 'picker-build', 'picker-title',
                       'picker-track', 'picker-status', 'picker-build-id', 'home',
                       'picker-progress', 'picker-stage', 'picker-percent', 'picker-fill',
-                      'no-session']) {
+                      'picker-drop', 'no-session']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -90,6 +91,7 @@
   async function boot() {
     bind();
     wirePicker();
+    able = await fetch('/api/capabilities').then((r) => r.json()).catch(() => able);
     const response = await fetch(api('/api/session'));
     if (!response.ok) {
       // A project that has not been built yet: show its files instead of an error. This
@@ -959,6 +961,7 @@
       dom['export-download'].href = api(`/api/output/${encodeURIComponent(name)}`);
       dom['export-download'].setAttribute('download', name);
       dom['export-reveal'].dataset.name = name;
+      dom['export-reveal'].hidden = !able.reveal;
       dom['export-done'].hidden = false;
     } catch (error) {
       dom['export-stage'].textContent = 'failed';
@@ -1027,6 +1030,12 @@
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
     }
+    // There is no system file dialog in a container, so say what to do instead of
+    // offering a button that can only fail.
+    dom['picker-add'].hidden = !able.file_dialog;
+    dom['picker-drop'].hidden = able.file_dialog;
+    dom['picker-drop'].textContent =
+      `Put the files in ${able.data_root}/${project ? project.name : '<project>'}/ and reopen this panel`;
   }
 
   function wire() {

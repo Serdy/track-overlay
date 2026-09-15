@@ -160,7 +160,7 @@ def test_audio_comes_from_the_opening_camera(tmp_path):
 def test_hardware_encoder_and_output_path(tmp_path):
     out = tmp_path / "final.mp4"
     plan = build_plan(SESSION, LAYOUT, None, out)
-    assert render.VIDEO_CODEC in plan.args
+    assert render.video_codec() in plan.args
     assert plan.args[-1] == str(out)
 
 
@@ -347,3 +347,15 @@ def test_the_overlay_input_index_matches_its_position(tmp_path, full_frame_base)
     last = sum(1 for a in plan.args if a == "-i") - 1
     referenced = {int(m) for m in re.findall(r"\[(\d+):v\]crop=", graph_of(plan))}
     assert referenced == {last}, "the overlay must be the last input"
+
+
+def test_the_encoder_follows_the_machine(monkeypatch):
+    """VideoToolbox is a Mac thing; asking for it on Linux fails outright, and the render
+    inside a container would never start."""
+    monkeypatch.delenv("TRACKOVERLAY_CODEC", raising=False)
+    monkeypatch.setattr(render.sys, "platform", "darwin")
+    assert render.video_codec() == "h264_videotoolbox"
+    monkeypatch.setattr(render.sys, "platform", "linux")
+    assert render.video_codec() == "libx264"
+    monkeypatch.setenv("TRACKOVERLAY_CODEC", "h264_nvenc")
+    assert render.video_codec() == "h264_nvenc"

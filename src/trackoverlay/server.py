@@ -96,13 +96,14 @@ class Media:
     proxy: dict[tuple[str, int], Path]
 
     @classmethod
-    def from_session(cls, payload: dict) -> "Media":
+    def from_session(cls, payload: dict, root: Path | None = None) -> "Media":
+        here = root or Path(".")
         full, proxy = {}, {}
         for clip in payload.get("clips", []):
             for i, path in enumerate(clip.get("files") or []):
-                full[(clip["id"], i)] = Path(path)
+                full[(clip["id"], i)] = projects.resolve_source(path, here)
             for i, path in enumerate(clip.get("proxy") or []):
-                proxy[(clip["id"], i)] = Path(path)
+                proxy[(clip["id"], i)] = projects.resolve_source(path, here)
         return cls(full, proxy)
 
     def resolve(self, clip_id: str, index: int, *, prefer_proxy: bool) -> Path | None:
@@ -137,7 +138,7 @@ class MediaCache:
                 return cached[1]
         try:
             media = Media.from_session(
-                json.loads(session_path.read_text(encoding="utf-8")))
+                json.loads(session_path.read_text(encoding="utf-8")), session_path.parent)
         except (OSError, json.JSONDecodeError):
             return Media({}, {})
         with self._lock:
@@ -288,6 +289,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if raw == "/api/projects":
             return self._json([p.as_dict() for p in projects.discover(self.data_root)])
+        if raw == "/api/capabilities":
+            # The page has to know what this machine can do before it offers it. In a
+            # container there is no file dialog to open, and a button that always fails
+            # is worse than no button.
+            return self._json({
+                "file_dialog": sys.platform == "darwin",
+                "reveal": sys.platform == "darwin" or sys.platform.startswith("linux"),
+                "data_root": str(self.data_root),
+            })
         if raw.startswith("/api/render/"):
             job = JOBS.get(raw.rsplit("/", 1)[-1])
             if job is None:
@@ -660,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
 
         def work() -> None:
             try:
-                prepared = render_module.prepare_clips(session, work_dir)
+                prepared = render_module.prepare_clips(session, work_dir, project.root)
                 plan = render_module.build_plan(
                     prepared, layout, overlay, output,
                     duration_s=request.get("duration"))
@@ -701,7 +711,7 @@ def _apply_offset(payload: dict, clip_id: str, manual_s: float) -> None:
 
 def make_server(data_root: Path, *, project: str | None = None,
                 session_path: Path | None = None,
-                port: int = 8712) -> ThreadingHTTPServer:
+                port: int = 8712, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     """A server over a data directory.
 
     `project` or `session_path` binds it to one project, so the un-prefixed routes still
@@ -719,15 +729,19 @@ def make_server(data_root: Path, *, project: str | None = None,
         "data_root": data_root,
         "bound": bound,
     })
-    return ThreadingHTTPServer(("127.0.0.1", port), handler)
+    return ThreadingHTTPServer((host, port), handler)
 
 
 def serve(data_root: Path, *, project: str | None = None,
           session_path: Path | None = None, port: int = 8712,
-          open_browser: bool = True) -> None:
+          host: str = "127.0.0.1", open_browser: bool = True) -> None:
     data_root.mkdir(parents=True, exist_ok=True)
-    httpd = make_server(data_root, project=project, session_path=session_path, port=port)
-    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    httpd = make_server(data_root, project=project, session_path=session_path,
+                        port=port, host=host)
+    # Loopback by default: this serves whole video files off the disk it runs on, and a
+    # tool bound to every interface would hand them to the network it happens to be on.
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{shown}:{httpd.server_address[1]}/"
     print(f"editor: {url}   (Ctrl+C to stop)")
     if open_browser:
         webbrowser.open(url)
