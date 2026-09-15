@@ -7,6 +7,7 @@ require('../js/widgets/speed.js');
 require('../js/widgets/lean.js');
 require('../js/widgets/accel.js');
 require('../js/widgets/laptime.js');
+require('../js/widgets/laplist.js');
 
 /** Fake canvas context: records calls and catches non-finite coordinates. */
 function fakeCtx() {
@@ -36,7 +37,7 @@ const FRAME = { width: 1920, height: 1080 };
 test('the registry knows the widgets and invents none', () => {
   // The map require sits further down the file but runs on load, before any test body.
   assert.deepStrictEqual(Widgets.ids().sort(),
-                         ['accel', 'laptime', 'lean', 'map', 'speed']);
+                         ['accel', 'laplist', 'laptime', 'lean', 'map', 'speed']);
   assert.strictEqual(Widgets.get('no such thing'), null);
 });
 
@@ -132,6 +133,7 @@ test('drawAll skips unknown types without dropping the rest', () => {
 
 require('../js/widgets/map.js');
 require('../js/widgets/laptime.js');
+require('../js/widgets/laplist.js');
 
 const ENVELOPE = {
   left: [[48.000, 17.000], [48.010, 17.000], [48.010, 17.020], [48.000, 17.020]],
@@ -244,4 +246,32 @@ test('a lap board with no data at all still draws', () => {
   const ctx = fakeCtx();
   Widgets.get('laptime').draw(ctx, { x: 0, y: 0, w: 880, h: 90 }, {});
   assert.ok(ctx.calls.length > 0);
+});
+
+
+test('the lap list draws a row per lap, the running one marked apart', () => {
+  const ctx = fakeCtx();
+  Widgets.get('laplist').draw(ctx, { x: 0, y: 0, w: 260, h: 260 }, {
+    lapList: [
+      { n: 4, time: 23.008, running: true, best: false },
+      { n: 3, time: 147.795, running: false, best: false },
+      { n: 2, time: 147.565, running: false, best: true },
+      { n: 1, time: 148.84, running: false, best: false },
+    ],
+  });
+  const text = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.ok(text.includes('23.008') && text.includes('2:27.795'));
+  assert.deepStrictEqual(text.filter((t) => ['1', '2', '3', '4'].includes(t)),
+                         ['4', '3', '2', '1']);
+
+  // The running lap and the best one are drawn in colours of their own.
+  const colours = ctx.calls.filter((c) => c.name === 'fillStyle').map((c) => c.args[0]);
+  assert.strictEqual(new Set(colours).size >= 4, true, colours.join(' '));
+});
+
+test('a lap list with nothing in it yet still draws', () => {
+  const ctx = fakeCtx();
+  Widgets.get('laplist').draw(ctx, { x: 0, y: 0, w: 260, h: 260 }, { lapList: [] });
+  const text = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.ok(text.includes('—'));
 });

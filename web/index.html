@@ -100,6 +100,10 @@
     <button id="segment" title="Swap for a stretch: click to mark the start, again to end it (D)">⇄ …</button>
     <button id="cut" title="Cut a stretch out: click to mark the start, again to end it (X)">✂ …</button>
     <button id="laps-only" title="Trim to the timed laps, dropping the ride out and back">laps</button>
+    <div class="menu">
+      <button id="widgets-button" title="Which widgets are on screen">⊞ widgets</button>
+      <div class="menu-panel" id="widgets-menu" hidden></div>
+    </div>
     <button id="undo" title="Undo the last change (⌘Z)" disabled>↶</button>
     <button id="redo" title="Redo (⇧⌘Z)" disabled>↷</button>
     <button id="reset" title="Return everything to the default layout">↺</button>
@@ -155,6 +159,7 @@
   <script src="js/widgets/accel.js"></script>
   <script src="js/widgets/map.js"></script>
   <script src="js/widgets/laptime.js"></script>
+  <script src="js/widgets/laplist.js"></script>
   <script src="js/state.js"></script>
 </body>
 </html>

@@ -23,10 +23,10 @@ you set up once and reuse for every session of the day.
 - Aligns the two on one timeline, to better than a frame at 60 fps
 - Finds the start/finish line and splits the session into laps, with no external track
   database
-- Draws five widgets: speed, lean angle, acceleration/braking, a map of the circuit, and
-  a lap board — best, previous and current lap with a live delta to the best. "Best"
-  means the best lap finished by that point in the session, so the board reads the way it
-  would have on the bike rather than knowing the session in advance
+- Draws six widgets: speed, lean angle, acceleration/braking, a map of the circuit, a lap
+  board (best, previous and current with a live delta) and a lap list. "Best" means the
+  best lap finished by that point in the session, so both read the way they would have on
+  the bike rather than knowing the session in advance
   built from your own GPS trace
 - Composes any number of cameras with picture-in-picture, lets you swap them over a
   stretch, and cut the ride out and back off the ends
@@ -178,6 +178,7 @@ uv run trackoverlay serve --project slovakia-ring-2026-09-12
 | Undo one change | `↶` or ⌘Z (⇧⌘Z to redo) |
 | Undo all of it | `↺` |
 | Sound from the main camera | `🔇` or M |
+| Choose which widgets show | `⊞ widgets` |
 | Check the sync again | `⇆ sync` |
 | Back to the project list | `☰ Projects` |
 
@@ -288,7 +289,7 @@ web/
   js/laptimes.js      lap times and the delta measured at equal distance
   js/history.js       undo and redo over layout snapshots
   js/filmstrip.js     where the timeline thumbnails go, and in what order
-  js/widgets/         speed, lean, acceleration, map, lap board
+  js/widgets/         speed, lean, acceleration, map, lap board, lap list
   js/export_overlay.js  the telemetry layer, through WebCodecs
 ```
 

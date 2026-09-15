@@ -157,3 +157,40 @@ test('the delta always carries its sign', () => {
   assert.strictEqual(LapTimes.formatDelta(0), '0.00');
   assert.strictEqual(LapTimes.formatDelta(null), '—');
 });
+
+
+test('the lap list puts the lap in progress on top, finished laps under it', () => {
+  const s = session({ speeds: [10, 8, 9] });
+  const model = LapTimes.build(s);
+  const rows = LapTimes.boardAt(model, s.laps[2].t_start + 10);
+
+  assert.deepStrictEqual(rows.map((row) => row.n), [3, 2, 1]);
+  assert.strictEqual(rows[0].running, true);
+  assert.ok(Math.abs(rows[0].time - 10) < 0.2);
+  assert.strictEqual(rows[1].time, s.laps[1].duration_s);
+});
+
+test('the lap list never shows a lap that has not started', () => {
+  const s = session({ speeds: [10, 8, 9] });
+  const model = LapTimes.build(s);
+  assert.deepStrictEqual(LapTimes.boardAt(model, s.laps[0].t_start + 1).map((r) => r.n), [1]);
+});
+
+test('the best lap so far is marked, and never the running one', () => {
+  const s = session({ speeds: [8, 10, 9] });     // lap two is the quickest
+  const model = LapTimes.build(s);
+  const rows = LapTimes.boardAt(model, s.laps[2].t_start + 5);
+  assert.deepStrictEqual(rows.filter((row) => row.best).map((row) => row.n), [2]);
+  assert.strictEqual(rows[0].best, false);
+});
+
+test('the lap list is capped at what fits', () => {
+  const s = session({ speeds: [10, 9, 8, 7, 6, 5, 9] });
+  const model = LapTimes.build(s);
+  assert.strictEqual(LapTimes.boardAt(model, s.laps[6].t_start + 1, 5).length, 5);
+});
+
+test('lap list times carry thousandths', () => {
+  assert.strictEqual(LapTimes.format(147.795, 3), '2:27.795');
+  assert.strictEqual(LapTimes.format(23.008, 3), '23.008');
+});

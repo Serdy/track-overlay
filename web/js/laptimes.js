@@ -162,6 +162,30 @@ const LapTimes = (function () {
     return reference === null ? null : (time - lap.t_start) - reference;
   }
 
+  /**
+   * The lap list as a board shows it: the lap being driven on top, finished laps under it.
+   *
+   * Only laps finished by now appear, for the same reason the best lap is the best so
+   * far — a board that lists times from later in the session is reading the future.
+   */
+  function boardAt(model, time, count = 5) {
+    const best = bestBy(model, time).lap;
+    const rows = [];
+    for (let i = model.laps.length - 1; i >= 0; i -= 1) {
+      const lap = model.laps[i];
+      if (lap.t_start > time) continue;
+      const running = lap.t_end > time;
+      rows.push({
+        n: lap.n,
+        time: running ? time - lap.t_start : lap.duration_s,
+        running,
+        best: Boolean(best) && !running && lap.n === best.n,
+      });
+      if (rows.length >= count) break;
+    }
+    return rows;
+  }
+
   /** "1:03.7" — minutes only when there are any, and tenths, as a pit board reads. */
   function format(seconds, digits = 1) {
     if (seconds === null || seconds === undefined) return '—';
@@ -180,7 +204,8 @@ const LapTimes = (function () {
     return `${rounded > 0 ? '+' : (rounded < 0 ? '-' : '')}${Math.abs(rounded).toFixed(digits)}`;
   }
 
-  return { STEP, build, curveFor, timeAt, bestBy, stateAt, format, formatDelta };
+  return { STEP, build, curveFor, timeAt, bestBy, stateAt, boardAt, format,
+           formatDelta };
 }());
 
 if (typeof module !== 'undefined' && module.exports) module.exports = LapTimes;

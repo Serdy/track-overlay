@@ -74,7 +74,7 @@
                       'sync-panel', 'sync-clip', 'sync-method', 'sync-slider',
                       'sync-value', 'sync-brake', 'sync-confirm',
                       'sync-saved', 'sync-later', 'open-sync',
-                      'strip', 'undo', 'redo',
+                      'strip', 'undo', 'redo', 'widgets-button', 'widgets-menu',
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result',
                       'export-done', 'export-download', 'export-reveal', 'export-error',
@@ -164,11 +164,6 @@
       // A camera added since this layout was saved has to be given somewhere to appear.
       const merged = Object.assign({}, fallback, saved,
                                    { cuts: Cuts.simplify(Cuts.adopt(cuts, [...known])) });
-      // A widget that did not exist when this layout was saved would otherwise never
-      // appear, and there is no way in the editor to add one by hand.
-      const placed = new Set((merged.widgets || []).map((widget) => widget.type));
-      merged.widgets = [...merged.widgets,
-                        ...DEFAULT_LAYOUT.widgets.filter((w) => !placed.has(w.type))];
       const checked = Layout.validate(merged, [...known], widgetSizes());
       if (!checked.ok) console.warn('layout repaired:', checked.errors.join('; '));
       return checked.layout;
@@ -662,6 +657,45 @@
     dom.sound.classList.toggle('armed', sound);
   }
 
+  // --- which widgets are on screen -------------------------------------------------
+
+  /**
+   * The widget menu, built from the registry rather than a list kept beside it.
+   *
+   * Unticking has to stick, which is why nothing adds missing widgets back on load: a
+   * layout says exactly what it says.
+   */
+  function buildWidgetMenu() {
+    dom['widgets-menu'].innerHTML = '';
+    const placed = new Set(layout.widgets.map((widget) => widget.type));
+    for (const id of Widgets.ids()) {
+      const widget = Widgets.get(id);
+      const row = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = placed.has(id);
+      box.addEventListener('change', () => toggleWidget(id, box.checked));
+      row.append(box, document.createTextNode(widget.title || id));
+      dom['widgets-menu'].appendChild(row);
+    }
+  }
+
+  function toggleWidget(id, wanted) {
+    remember();
+    layout.widgets = wanted
+      ? [...layout.widgets, placementFor(id)]
+      : layout.widgets.filter((widget) => widget.type !== id);
+    renderCutMarks();              // the reset button tracks how far the layout has moved
+    saveLayout();
+    render(clock.time);
+  }
+
+  /** Where a widget lands when it is switched on: its place in the default layout. */
+  function placementFor(id) {
+    const known = DEFAULT_LAYOUT.widgets.find((widget) => widget.type === id);
+    return known ? JSON.parse(JSON.stringify(known)) : { type: id, pos: [0.04, 0.05], scale: 1 };
+  }
+
   // --- the filmstrip along the timeline ------------------------------------------
 
   /**
@@ -881,6 +915,7 @@
     if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
 
     data.laps = LapTimes.stateAt(lapModel, session, time);
+    data.lapList = LapTimes.boardAt(lapModel, time);
     data.map = prepareMap(frame);
     data.trail = trailFor(time);
     Widgets.drawAll(ctx, layout.widgets, frame, data);
@@ -1004,6 +1039,16 @@
     dom.segment.addEventListener('click', () => markSegment('swap'));
     dom.cut.addEventListener('click', () => markSegment('cut'));
     dom['laps-only'].addEventListener('click', trimToLaps);
+    dom['widgets-button'].addEventListener('click', (event) => {
+      event.stopPropagation();
+      const showing = dom['widgets-menu'].hidden;
+      if (showing) buildWidgetMenu();
+      dom['widgets-menu'].hidden = !showing;
+    });
+    document.addEventListener('click', (event) => {
+      if (!dom['widgets-menu'].contains(event.target)) dom['widgets-menu'].hidden = true;
+    });
+
     dom.undo.addEventListener('click', () => stepHistory('undo'));
     dom.redo.addEventListener('click', () => stepHistory('redo'));
     dom.reset.addEventListener('click', resetLayout);
