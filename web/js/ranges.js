@@ -110,9 +110,30 @@ const Ranges = (function () {
    * This is the case that actually comes up: the in-lap runs for minutes before the first
    * flying lap, and the cool-down after the last one is just as long.
    */
-  function lapsOnly(laps, duration) {
+  // A lap ends the moment the timing line is crossed, and a video that stops on that
+  // frame stops mid-corner. A couple of seconds of run-off is what a person would leave.
+  const TAIL_S = 2;
+
+  function lapsOnly(laps, duration, tail = TAIL_S) {
     if (!laps || !laps.length) return full(duration);
-    return normalise([{ from: laps[0].t_start, to: laps[laps.length - 1].t_end }], duration);
+    return normalise([{
+      from: laps[0].t_start,
+      to: Math.min(duration, laps[laps.length - 1].t_end + tail),
+    }], duration);
+  }
+
+  /**
+   * One lap with room either side: a few seconds of approach, a moment of run-off.
+   *
+   * Starting exactly on the timing line gives no idea of how the lap was entered, which
+   * is most of what a fast lap is.
+   */
+  function aroundLap(lap, duration, { before = 3, after = TAIL_S } = {}) {
+    if (!lap) return full(duration);
+    return normalise([{
+      from: Math.max(0, lap.t_start - before),
+      to: Math.min(duration, lap.t_end + after),
+    }], duration);
   }
 
   /** Whether two sets of kept stretches describe the same video, to the millisecond. */
@@ -125,7 +146,7 @@ const Ranges = (function () {
   }
 
   return { full, normalise, cut, keepOnly, total, toSession, toOutput, isKept, gaps,
-           lapsOnly, same };
+           lapsOnly, aroundLap, same, TAIL_S };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

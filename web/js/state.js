@@ -943,9 +943,24 @@
 
   async function startExport() {
     if (exporting) return;
-    const limit = Number(dom['export-range'].value);
+    const choice = dom['export-range'].value;
+    const limit = Number(choice) || 0;
     const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, layout.output,
                                  { duration: session.duration });
+
+    // The best lap is a window, not a length, and the renderer knows only about kept
+    // stretches - so it is expressed as one for the duration of this export and put back
+    // afterwards. The layout on disk is what the render reads, hence the round trip.
+    const lap = choice === 'best' ? SessionModel.bestLap(session) : null;
+    const wasKept = layout.ranges;
+    if (choice === 'best') {
+      if (!lap) {
+        dom['export-panel'].hidden = false;
+        dom['export-error'].textContent = 'no timed lap to export yet';
+        return;
+      }
+      layout.ranges = Ranges.aroundLap(lap, session.duration);
+    }
 
     exporting = new AbortController();
     await flushLayout();
@@ -968,7 +983,7 @@
         toSession: (outputTime) => Ranges.toSession(ranges, outputTime),
         kept: Ranges.total(ranges),
         duration: limit || null,
-        name: limit ? `preview_${limit}s.mp4` : 'final.mp4',
+        name: lap ? `best_lap_${lap.n}.mp4` : (limit ? `preview_${limit}s.mp4` : 'final.mp4'),
         drawFrame: paintOverlay,
         signal: exporting.signal,
         onStage: (text) => { dom['export-stage'].textContent = text; },
@@ -987,6 +1002,12 @@
     } finally {
       exporting = null;
       dom.export.disabled = false;
+      if (choice === 'best') {
+        layout.ranges = wasKept;
+        await flushLayout();
+        renderGapMarks();
+        render(clock.time);
+      }
     }
   }
 

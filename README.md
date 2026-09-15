@@ -178,7 +178,9 @@ reveals it where it already is — which is usually what you want, since a finis
 runs to hundreds of megabytes and downloading writes a second copy onto the same disk.
 
 Press **Export** to compose. Start with the 10-second option to check the layout before
-committing to a full session. The tab can be left in the background while it runs - the
+committing to a full session, or pick **best lap** — that renders the quickest lap with
+three seconds of approach and a moment of run-off, which is the clip worth sending to
+anyone. The tab can be left in the background while it runs - the
 render loop is driven by encoder events rather than timers, which browsers clamp to about
 one call a second once a tab stops being visible. The same thing from a terminal:
 

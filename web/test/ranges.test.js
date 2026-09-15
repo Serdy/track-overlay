@@ -122,9 +122,9 @@ test('a tail gap is reported too', () => {
                          [{ from: 90, to: 100 }]);
 });
 
-test('laps only keeps from the first lap start to the last lap end', () => {
+test('laps only keeps from the first lap start to just past the last lap end', () => {
   const laps = [{ t_start: 20, t_end: 45 }, { t_start: 45, t_end: 70 }];
-  assert.deepStrictEqual(Ranges.lapsOnly(laps, D), [{ from: 20, to: 70 }]);
+  assert.deepStrictEqual(Ranges.lapsOnly(laps, D), [{ from: 20, to: 70 + Ranges.TAIL_S }]);
 });
 
 test('laps only with no laps keeps the whole session', () => {
@@ -143,4 +143,25 @@ test('a trim to the laps is recognised as one', () => {
   const laps = [{ t_start: 14, t_end: 180 }, { t_start: 180, t_end: 340 }];
   assert.ok(Ranges.same(Ranges.lapsOnly(laps, 600), Ranges.lapsOnly(laps, 600)));
   assert.ok(!Ranges.same(Ranges.lapsOnly(laps, 600), Ranges.full(600)));
+});
+
+test('a trim to the laps leaves a moment of run-off after the last one', () => {
+  const laps = [{ t_start: 14, t_end: 180 }, { t_start: 180, t_end: 340 }];
+  const kept = Ranges.lapsOnly(laps, 600);
+  assert.deepStrictEqual(kept, [{ from: 14, to: 342 }]);
+});
+
+test('the run-off cannot run past the end of the session', () => {
+  const laps = [{ t_start: 14, t_end: 340 }];
+  assert.deepStrictEqual(Ranges.lapsOnly(laps, 341), [{ from: 14, to: 341 }]);
+});
+
+test('one lap is exported with its approach and its run-off', () => {
+  const lap = { n: 3, t_start: 100, t_end: 260 };
+  assert.deepStrictEqual(Ranges.aroundLap(lap, 600), [{ from: 97, to: 262 }]);
+});
+
+test('the approach is clamped at the start of the session', () => {
+  assert.deepStrictEqual(Ranges.aroundLap({ t_start: 1, t_end: 160 }, 600),
+                         [{ from: 0, to: 162 }]);
 });
