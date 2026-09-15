@@ -87,12 +87,22 @@ body {
 
 .transport {
   display: flex;
+  flex-direction: column;
+}
+
+/* The timeline gets a row to itself: with thumbnails in it there is no width to spare,
+   and squeezed between the buttons it collapsed to a sliver. */
+.transport-row {
+  display: flex;
   gap: 10px;
   align-items: center;
   padding: 10px 14px;
-  border-top: 1px solid var(--line);
   background: var(--panel);
 }
+
+.transport-row:first-child { border-top: 1px solid var(--line); }
+.transport-row + .transport-row { padding-top: 0; }
+.transport-row .timeline { min-width: 200px; }
 
 .transport button {
   min-width: 38px;
@@ -116,12 +126,21 @@ body {
 .timeline {
   position: relative;
   flex: 1;
-  height: 30px;
+  height: 38px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #0c0e12;
   cursor: pointer;
   overflow: hidden;
+}
+
+/* Frames from the opening camera, dimmed so the lap and cut marks stay readable on top. */
+.strip {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.55;
 }
 
 .laps { position: absolute; inset: 0; }
@@ -234,15 +253,6 @@ code { font-variant-numeric: tabular-nums; }
   border-radius: 6px;
   background: #0c0e12;
   color: var(--text);
-}
-
-/* The speed trace either side of the playhead, for comparing against the frame. */
-.sync-graph {
-  width: 100%;
-  height: 56px;
-  margin-top: 8px;
-  border-radius: 6px;
-  background: #0c0e12;
 }
 
 .warn { color: var(--accent); }

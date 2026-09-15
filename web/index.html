@@ -70,7 +70,6 @@
       <button id="sync-later">Later</button>
       <button id="sync-confirm">Looks right</button>
     </div>
-    <canvas id="sync-graph" class="sync-graph" height="56"></canvas>
   </section>
 
   <div id="export-panel" class="export-panel" hidden>
@@ -91,6 +90,7 @@
   </div>
 
   <footer class="transport">
+    <div class="transport-row">
     <button id="play" title="Space">▶</button>
     <button id="prev-lap" title="Arrow up">⏮</button>
     <button id="next-lap" title="Arrow down">⏭</button>
@@ -100,6 +100,8 @@
     <button id="segment" title="Swap for a stretch: click to mark the start, again to end it (D)">⇄ …</button>
     <button id="cut" title="Cut a stretch out: click to mark the start, again to end it (X)">✂ …</button>
     <button id="laps-only" title="Trim to the timed laps, dropping the ride out and back">laps</button>
+    <button id="undo" title="Undo the last change (⌘Z)" disabled>↶</button>
+    <button id="redo" title="Redo (⇧⌘Z)" disabled>↷</button>
     <button id="reset" title="Return everything to the default layout">↺</button>
     <button id="export" title="Compose everything into one video">⬇ Export</button>
     <select id="resolution" title="Output resolution">
@@ -115,7 +117,11 @@
       <option value="300">5 min</option>
       <option value="0">whole session</option>
     </select>
+    </div>
+
+    <div class="transport-row">
     <div class="timeline" id="timeline">
+      <canvas class="strip" id="strip"></canvas>
       <div class="laps" id="lap-marks"></div>
       <div class="gaps" id="gap-marks"></div>
       <div class="cuts" id="cut-marks"></div>
@@ -124,12 +130,15 @@
     </div>
     <code id="clock-time">0:00.000</code>
     <code id="lap-label" class="muted">—</code>
+    </div>
   </footer>
 
   <script src="js/sr-track.js"></script>
   <script src="js/session.js"></script>
   <script src="js/clock.js"></script>
   <script src="js/cuts.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/filmstrip.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/ranges.js"></script>
   <script src="js/picker.js"></script>

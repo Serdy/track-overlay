@@ -28,6 +28,10 @@
   let brakingPoints = [];       // the frames worth checking the sync against
   let brakingAt = -1;
   let sound = false;            // only the main slot is ever unmuted
+  let history = History.create();
+  let stripToken = 0;           // cancels a filmstrip build that has been overtaken
+  let stripTimer = null;
+  let lastWheel = 0;
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -66,8 +70,9 @@
                       'cut-marks', 'gap-marks', 'pending-range',
                       'resolution',
                       'sync-panel', 'sync-clip', 'sync-method', 'sync-slider',
-                      'sync-value', 'sync-brake', 'sync-confirm', 'sync-graph',
+                      'sync-value', 'sync-brake', 'sync-confirm',
                       'sync-saved', 'sync-later', 'open-sync',
+                      'strip', 'undo', 'redo',
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result',
                       'export-done', 'export-download', 'export-reveal', 'export-error',
@@ -124,8 +129,9 @@
     }
 
     Clock.onChange(clock, render);
-    window.addEventListener('resize', resizeOverlay);
+    window.addEventListener('resize', () => { resizeOverlay(); scheduleStrip(); });
     resizeOverlay();
+    buildStrip();
     render(0);
     requestAnimationFrame(tick);
 
@@ -255,6 +261,7 @@
       mark.title = `${Clock.formatTime(cut.t)} — click to remove`;
       mark.addEventListener('pointerdown', (event) => {
         event.stopPropagation();                 // do not scrub while deleting
+        remember();
         layout.cuts = Cuts.removeNear(layout.cuts, cut.t, 0.01);
         renderCutMarks();
         saveLayout();
@@ -277,6 +284,7 @@
     if (moved) parts.push('the widget placement');
     if (!window.confirm(`Discard ${parts.join(', ')}?`)) return;
 
+    remember();
     layout = Object.assign(JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
                            { cuts: Cuts.initial(session.clips.map((clip) => clip.id)) });
     segmentStart = null;
@@ -294,6 +302,7 @@
   }
 
   function swapFromPlayhead() {
+    remember();
     layout.cuts = Cuts.swapAt(layout.cuts, clock.time);
     renderCutMarks();
     saveLayout();
@@ -329,6 +338,7 @@
     updatePending();
     if (to - from < 0.2) return;                 // too short to mean anything
 
+    remember();
     if (action === 'cut') {
       layout.ranges = Ranges.cut(keptRanges(), from, to, session.duration);
       renderGapMarks();
@@ -341,6 +351,7 @@
   }
 
   function trimToLaps() {
+    remember();
     layout.ranges = Ranges.lapsOnly(session.laps, session.duration);
     renderGapMarks();
     saveLayout();
@@ -546,7 +557,6 @@
     dom['sync-method'].className = sync.reliable ? 'muted' : 'warn';
     dom['sync-slider'].value = String(manual);
     dom['sync-value'].textContent = `${manual >= 0 ? '+' : ''}${manual.toFixed(2)} s`;
-    drawSyncGraph();
   }
 
   function autoOffset(clip) {
@@ -612,49 +622,7 @@
     Clock.seek(clock, brakingPoints[brakingAt].t);
   }
 
-  /** Speed either side of the playhead, to compare against what the frame shows. */
-  function drawSyncGraph() {
-    const canvas = dom['sync-graph'];
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width = canvas.clientWidth || 600;
-    const height = canvas.height;
-    const span = 6;                       // seconds either side
-    const now = clock.time;
-
-    ctx.clearRect(0, 0, width, height);
-
-    // Scaled to the window, not to zero: the point is to see the shape of one braking
-    // event, and against a 250 km/h axis a 60 km/h drop is a barely visible kink.
-    let low = Infinity;
-    let high = -Infinity;
-    const at = (x) => SessionModel.sampleAt(
-      session, 'speed', Math.max(0, now + (x / width - 0.5) * 2 * span)) || 0;
-    for (let x = 0; x <= width; x += 1) {
-      low = Math.min(low, at(x));
-      high = Math.max(high, at(x));
-    }
-    const range = Math.max(5, high - low);
-
-    ctx.strokeStyle = '#4da3ff';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    for (let x = 0; x <= width; x += 1) {
-      const y = height - ((at(x) - low) / range) * (height - 10) - 5;
-      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    ctx.fillStyle = '#8b919c';
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.fillText(`${Math.round(high)} km/h`, 6, 13);
-    ctx.fillText(`${Math.round(low)}`, 6, height - 5);
-
-    ctx.strokeStyle = '#f5bc00';
-    ctx.beginPath();
-    ctx.moveTo(width / 2, 0);
-    ctx.lineTo(width / 2, height);
-    ctx.stroke();
-  }
+  // --- sound -----------------------------------------------------------------------
 
   /**
    * Turns the sound on or off, remembering the choice.
@@ -684,6 +652,120 @@
     dom.sound.classList.toggle('armed', sound);
   }
 
+  // --- the filmstrip along the timeline ------------------------------------------
+
+  /**
+   * Draws frames from the opening camera across the timeline.
+   *
+   * Grabbing a frame means seeking a video and drawing it — tens of milliseconds each —
+   * so this runs in the background, paints each thumbnail as it arrives, and carries a
+   * token so a rebuild started by a resize abandons the one it overtook. A separate
+   * hidden video does the seeking: reusing the ones on stage would drag the preview
+   * around while the strip fills in.
+   */
+  async function buildStrip() {
+    const token = (stripToken += 1);
+    const canvas = dom.strip;
+    const box = dom.timeline.getBoundingClientRect();
+    if (!box.width || !session.clips.length) return;
+
+    const scale = window.devicePixelRatio || 1;
+    canvas.width = Math.round(box.width * scale);
+    canvas.height = Math.round(box.height * scale);
+    const ctx = canvas.getContext('2d');
+
+    // The camera that opens in the main slot. Which one holds it later varies, and a
+    // strip that changed camera halfway would be harder to read than one that does not.
+    const opening = Cuts.resolveAt(layout.cuts, 0) || {};
+    const clip = SessionModel.clipById(session, opening.main) || session.clips[0];
+
+    const shots = Filmstrip.plan({ duration: session.duration, width: box.width });
+    const groups = Filmstrip.byChunk(shots, (t) => SessionModel.chunkAt(clip, t));
+    const probe = document.createElement('video');
+    probe.muted = true;
+    probe.preload = 'auto';
+
+    try {
+      for (const group of groups) {
+        if (token !== stripToken) return;
+        probe.src = api(`/media/${clip.id}/${group.index}`) + (clip.proxy ? '?proxy=1' : '');
+        await once(probe, 'loadeddata');
+        for (const shot of group.items) {
+          if (token !== stripToken) return;
+          probe.currentTime = shot.time;
+          await once(probe, 'seeked');
+          ctx.drawImage(probe, shot.x * scale, 0, shot.width * scale, canvas.height);
+        }
+      }
+    } catch (error) {
+      // A camera whose file will not decode simply leaves the strip empty; the timeline
+      // works exactly as it did before.
+    } finally {
+      probe.removeAttribute('src');
+      probe.load();
+    }
+  }
+
+  function once(element, event) {
+    return new Promise((resolve, reject) => {
+      const done = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error(`${event} never came`)); };
+      const cleanup = () => {
+        element.removeEventListener(event, done);
+        element.removeEventListener('error', failed);
+      };
+      element.addEventListener(event, done, { once: true });
+      element.addEventListener('error', failed, { once: true });
+    });
+  }
+
+  function scheduleStrip() {
+    clearTimeout(stripTimer);
+    stripTimer = setTimeout(() => buildStrip(), 300);
+  }
+
+  // --- undo ------------------------------------------------------------------------
+
+  /** Records the layout as it is now, before an edit replaces it. */
+  function remember() {
+    history = History.push(history, layout);
+    updateHistoryButtons();
+  }
+
+  function updateHistoryButtons() {
+    dom.undo.disabled = !History.canUndo(history);
+    dom.redo.disabled = !History.canRedo(history);
+  }
+
+  function stepHistory(direction) {
+    const step = direction === 'undo'
+      ? History.undo(history, layout) : History.redo(history, layout);
+    if (!step) return;
+    history = step.history;
+    applyLayout(step.state);
+    updateHistoryButtons();
+  }
+
+  /** Puts a layout back on screen, redrawing everything that reads from it. */
+  function applyLayout(next) {
+    layout = next;
+    segmentStart = null;
+    segmentAction = null;
+    dom.segment.classList.remove('armed');
+    dom.cut.classList.remove('cutting');
+    dom['pending-range'].hidden = true;
+    if (layout.output && layout.output.width) {
+      dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
+    }
+    for (const slot of videos) slot.slot = null;
+    invalidateMap();
+    renderCutMarks();
+    renderGapMarks();
+    syncVideos(clock.time);
+    render(clock.time);
+    saveLayout();
+  }
+
   /** Widget sizes as fractions of the frame, for hit testing and clamping. */
   function widgetSizes() {
     const sizes = {};
@@ -708,6 +790,10 @@
     if (hit) dragging = { kind: 'widget', index: hit.index, x, y };
     else if (onPip) dragging = { kind: 'pip', x, y, rect: [...pip.rect] };
     else return;
+
+    // Once for the whole drag, not per pointer move: undo should step back to where the
+    // widget was before it was picked up, not nudge it a pixel at a time.
+    remember();
 
     dom.overlay.classList.add('dragging');
     dom.overlay.setPointerCapture(event.pointerId);
@@ -745,6 +831,10 @@
   function onWheel(event) {
     const [x, y] = framePoint(event);
     const hit = Layout.hitTest(layout, widgetSizes(), x, y);
+    // A wheel gesture arrives as a burst of events; one undo step per burst, not per tick.
+    const now = performance.now();
+    if (now - lastWheel > 600) remember();
+    lastWheel = now;
     const factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
     if (hit) {
       layout = Layout.scaleWidget(layout, hit.index, factor);
@@ -903,6 +993,8 @@
     dom.segment.addEventListener('click', () => markSegment('swap'));
     dom.cut.addEventListener('click', () => markSegment('cut'));
     dom['laps-only'].addEventListener('click', trimToLaps);
+    dom.undo.addEventListener('click', () => stepHistory('undo'));
+    dom.redo.addEventListener('click', () => stepHistory('redo'));
     dom.reset.addEventListener('click', resetLayout);
     dom.export.addEventListener('click', startExport);
 
@@ -925,6 +1017,7 @@
     dom.overlay.addEventListener('wheel', onWheel, { passive: false });
 
     dom.resolution.addEventListener('change', () => {
+      remember();
       const [w, h] = dom.resolution.value.split('x').map(Number);
       layout.output = Object.assign({}, layout.output, { width: w, height: h });
       saveLayout();
@@ -972,6 +1065,10 @@
         x: () => markSegment('cut'),
         m: toggleSound,
       };
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        return stepHistory(event.shiftKey ? 'redo' : 'undo');
+      }
       const action = actions[event.key];
       if (action) {
         event.preventDefault();
@@ -1046,7 +1143,6 @@
   }
 
   function render(time) {
-    if (!dom['sync-panel'].hidden) drawSyncGraph();
     dom['clock-time'].textContent = Clock.formatTime(time);
     dom.play.textContent = clock.playing ? '❚❚' : '▶';
     dom.rate.textContent = `${clock.rate}×`;

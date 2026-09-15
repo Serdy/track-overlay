@@ -172,12 +172,15 @@ uv run trackoverlay serve --project slovakia-ring-2026-09-12
 | Swap them over a stretch | `⇄ …` or D, twice: start then end |
 | Cut a stretch out | `✂ …` or X, twice |
 | Trim to the timed laps | `laps` |
+| Undo one change | `↶` or ⌘Z (⇧⌘Z to redo) |
 | Undo all of it | `↺` |
 | Sound from the main camera | `🔇` or M |
 | Check the sync again | `⇆ sync` |
 | Back to the project list | `☰ Projects` |
 
-Everything is saved to the project's `layout.json` as you go, and reloaded next time.
+Everything is saved to the project's `layout.json` as you go, and reloaded next time. The
+timeline carries thumbnails from the opening camera, so a place worth cutting or swapping
+at can be found by eye.
 
 When it finishes, **Download** saves the file through the browser and **Show in Finder**
 reveals it where it already is — which is usually what you want, since a finished render
