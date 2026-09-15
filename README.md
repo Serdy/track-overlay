@@ -173,6 +173,7 @@ uv run trackoverlay serve --project slovakia-ring-2026-09-12
 | Cut a stretch out | `✂ …` or X, twice |
 | Trim to the timed laps | `laps` |
 | Undo all of it | `↺` |
+| Sound from the main camera | `🔇` or M |
 | Check the sync again | `⇆ sync` |
 | Back to the project list | `☰ Projects` |
 

@@ -27,6 +27,7 @@
   let syncTimer = null;
   let brakingPoints = [];       // the frames worth checking the sync against
   let brakingAt = -1;
+  let sound = false;            // only the main slot is ever unmuted
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -60,6 +61,7 @@
     for (const id of ['track-name', 'session-info', 'sync-info', 'slots', 'overlay',
                       'empty', 'readout', 'play', 'prev-lap', 'next-lap', 'rate',
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
+                      'sound',
                       'swap', 'segment', 'cut', 'laps-only', 'reset',
                       'cut-marks', 'gap-marks', 'pending-range',
                       'resolution',
@@ -116,6 +118,7 @@
 
     // Only now, with the readout cells and video tags in place, is it safe to restore
     // anything that redraws.
+    restoreSound();
     if (layout.output && layout.output.width) {
       dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
     }
@@ -201,6 +204,8 @@
     videos = session.clips.map((clip) => {
       const element = document.createElement('video');
       element.preload = 'auto';
+      // Muted here and decided per frame in syncVideos: two cameras play at once, and
+      // two engine notes over each other are worse than none.
       element.muted = true;
       element.playsInline = true;
       dom.slots.appendChild(element);
@@ -651,6 +656,34 @@
     ctx.stroke();
   }
 
+  /**
+   * Turns the sound on or off, remembering the choice.
+   *
+   * Autoplay rules only allow unmuted playback after the page has been clicked, which by
+   * this point it has - playback itself starts from a button.
+   */
+  function toggleSound() {
+    sound = !sound;
+    dom.sound.textContent = sound ? '🔊' : '🔇';
+    dom.sound.classList.toggle('armed', sound);
+    try {
+      window.localStorage.setItem('trackoverlay.sound', sound ? '1' : '0');
+    } catch (error) {
+      // Private windows refuse storage; the setting simply will not be remembered.
+    }
+    syncVideos(clock.time);
+  }
+
+  function restoreSound() {
+    try {
+      sound = window.localStorage.getItem('trackoverlay.sound') === '1';
+    } catch (error) {
+      sound = false;
+    }
+    dom.sound.textContent = sound ? '🔊' : '🔇';
+    dom.sound.classList.toggle('armed', sound);
+  }
+
   /** Widget sizes as fractions of the frame, for hit testing and clamping. */
   function widgetSizes() {
     const sizes = {};
@@ -865,6 +898,7 @@
     dom['prev-lap'].addEventListener('click', () => Clock.jumpLap(clock, session.laps, -1));
     dom['next-lap'].addEventListener('click', () => Clock.jumpLap(clock, session.laps, +1));
     dom.rate.addEventListener('click', () => Clock.cycleRate(clock, +1));
+    dom.sound.addEventListener('click', toggleSound);
     dom.swap.addEventListener('click', swapFromPlayhead);
     dom.segment.addEventListener('click', () => markSegment('swap'));
     dom.cut.addEventListener('click', () => markSegment('cut'));
@@ -936,6 +970,7 @@
         s: swapFromPlayhead,
         d: () => markSegment('swap'),
         x: () => markSegment('cut'),
+        m: toggleSound,
       };
       const action = actions[event.key];
       if (action) {
@@ -1049,6 +1084,9 @@
       const inSlot = arrangement.main === clip.id ? 'main'
                    : (arrangement.pip === clip.id ? 'pip' : null);
       placeInSlot(slot, inSlot);
+      // The export takes its audio from whichever camera holds the main slot, so the
+      // preview does the same - otherwise the sound would change on the way out.
+      element.muted = !sound || inSlot !== 'main';
       if (!inSlot) {
         if (!element.paused) element.pause();
         continue;
