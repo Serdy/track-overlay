@@ -91,6 +91,25 @@ const Cuts = (function () {
   }
 
   /**
+   * Gives a camera nobody has placed yet a slot to appear in.
+   *
+   * A session can gain a camera after the layout was saved - a second GoPro turns up, or
+   * a chunk is added and rebuilt. The saved cuts then mention only the cameras that
+   * existed at the time, and the newcomer is in the session, synced and invisible, with
+   * nothing in the editor hinting at why. It takes the inset wherever the inset is free.
+   */
+  function adopt(cuts, clipIds) {
+    const used = new Set();
+    for (const cut of cuts) {
+      if (cut.main) used.add(cut.main);
+      if (cut.pip) used.add(cut.pip);
+    }
+    const spare = clipIds.find((id) => !used.has(id));
+    if (!spare) return cuts;
+    return cuts.map((cut) => (cut.pip ? cut : Object.assign({}, cut, { pip: spare })));
+  }
+
+  /**
    * Expands the sparse list into explicit windows: one entry per slot occupancy with a
    * start and an end. This is the shape the ffmpeg graph generator consumes.
    */
@@ -108,7 +127,8 @@ const Cuts = (function () {
     return out;
   }
 
-  return { initial, resolveAt, add, swapAt, swapRange, removeNear, simplify, windows };
+  return { initial, adopt, resolveAt, add, swapAt, swapRange, removeNear, simplify,
+           windows };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

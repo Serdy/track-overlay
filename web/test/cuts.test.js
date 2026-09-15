@@ -159,3 +159,20 @@ test('windows drop a zero-length span', () => {
   const cuts = Cuts.swapAt(twoCams(), 300);
   assert.ok(Cuts.windows(cuts, 300).every((span) => span.to > span.from));
 });
+
+test('a camera that turns up later is given the free inset', () => {
+  const saved = [{ t: 0, main: 'cam_3429', pip: null }];
+  assert.deepStrictEqual(Cuts.adopt(saved, ['cam_3429', 'cam_3446']),
+    [{ t: 0, main: 'cam_3429', pip: 'cam_3446' }]);
+});
+
+test('adopting fills every arrangement whose inset is free', () => {
+  const saved = [{ t: 0, main: 'a', pip: null }, { t: 60, main: 'a', pip: null }];
+  assert.deepStrictEqual(Cuts.adopt(saved, ['a', 'b']).map((cut) => cut.pip), ['b', 'b']);
+});
+
+test('adopting leaves an arrangement that already uses both slots alone', () => {
+  const saved = [{ t: 0, main: 'a', pip: 'b' }];
+  assert.strictEqual(Cuts.adopt(saved, ['a', 'b']), saved);
+  assert.deepStrictEqual(Cuts.adopt(saved, ['a', 'b', 'c']), saved);
+});

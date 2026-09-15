@@ -147,7 +147,9 @@
       const cuts = (saved.cuts || []).filter(
         (cut) => known.has(cut.main) && (cut.pip === null || known.has(cut.pip)));
       if (!cuts.length) return fallback;
-      const merged = Object.assign({}, fallback, saved, { cuts: Cuts.simplify(cuts) });
+      // A camera added since this layout was saved has to be given somewhere to appear.
+      const merged = Object.assign({}, fallback, saved,
+                                   { cuts: Cuts.simplify(Cuts.adopt(cuts, [...known])) });
       const checked = Layout.validate(merged, [...known], widgetSizes());
       if (!checked.ok) console.warn('layout repaired:', checked.errors.join('; '));
       return checked.layout;
