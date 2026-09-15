@@ -161,7 +161,7 @@ uv run trackoverlay serve --project slovakia-ring-2026-09-12
 | Swap the cameras from here | `⇄` or S |
 | Swap them over a stretch | `⇄ …` or D, twice: start then end |
 | Cut a stretch out | `✂ …` or X, twice |
-| Trim to the timed laps | `laps` |
+| Trim to the timed laps, and back | `laps` — lit while trimmed |
 | Undo one change | `↶` or ⌘Z (⇧⌘Z to redo) |
 | Undo all of it | `↺` |
 | Sound from the main camera | `🔇` or M |

@@ -115,7 +115,17 @@ const Ranges = (function () {
     return normalise([{ from: laps[0].t_start, to: laps[laps.length - 1].t_end }], duration);
   }
 
-  return { full, normalise, cut, keepOnly, total, toSession, toOutput, isKept, gaps, lapsOnly };
+  /** Whether two sets of kept stretches describe the same video, to the millisecond. */
+  function same(a, b) {
+    const left = normalise(a || [], Infinity);
+    const right = normalise(b || [], Infinity);
+    if (left.length !== right.length) return false;
+    return left.every((range, i) => Math.abs(range.from - right[i].from) < 0.001
+                                 && Math.abs(range.to - right[i].to) < 0.001);
+  }
+
+  return { full, normalise, cut, keepOnly, total, toSession, toOutput, isKept, gaps,
+           lapsOnly, same };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

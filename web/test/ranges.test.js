@@ -130,3 +130,17 @@ test('laps only keeps from the first lap start to the last lap end', () => {
 test('laps only with no laps keeps the whole session', () => {
   assert.deepStrictEqual(Ranges.lapsOnly([], D), whole());
 });
+
+test('two sets of kept stretches can be compared', () => {
+  assert.ok(Ranges.same([{ from: 10, to: 20 }], [{ from: 10, to: 20 }]));
+  assert.ok(Ranges.same([{ from: 10, to: 20 }], [{ from: 10.0004, to: 20 }]));
+  assert.ok(!Ranges.same([{ from: 10, to: 20 }], [{ from: 10, to: 21 }]));
+  assert.ok(!Ranges.same([{ from: 10, to: 20 }],
+                         [{ from: 10, to: 15 }, { from: 16, to: 20 }]));
+});
+
+test('a trim to the laps is recognised as one', () => {
+  const laps = [{ t_start: 14, t_end: 180 }, { t_start: 180, t_end: 340 }];
+  assert.ok(Ranges.same(Ranges.lapsOnly(laps, 600), Ranges.lapsOnly(laps, 600)));
+  assert.ok(!Ranges.same(Ranges.lapsOnly(laps, 600), Ranges.full(600)));
+});

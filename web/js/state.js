@@ -357,12 +357,25 @@
     render(clock.time);
   }
 
+  /**
+   * Trims to the timed laps, or puts the ride out and back again if it is already trimmed.
+   *
+   * A button that only ever cut was hard to read: with the marks hatched at the ends of a
+   * long timeline there was nothing saying whether they came from this or from a cut made
+   * by hand. As a toggle it can light up, and say so.
+   */
   function trimToLaps() {
     remember();
-    layout.ranges = Ranges.lapsOnly(session.laps, session.duration);
+    layout.ranges = lapsTrimmed() ? null : Ranges.lapsOnly(session.laps, session.duration);
     renderGapMarks();
     saveLayout();
     render(clock.time);
+  }
+
+  /** Whether what is kept is exactly the laps, rather than trimming done by hand. */
+  function lapsTrimmed() {
+    if (!session.laps.length) return false;
+    return Ranges.same(keptRanges(), Ranges.lapsOnly(session.laps, session.duration));
   }
 
   /** Greys out on the timeline whatever will not reach the video. */
@@ -377,6 +390,11 @@
     }
     const kept = Ranges.total(ranges);
     dom['laps-only'].disabled = !session.laps.length;
+    const trimmed = lapsTrimmed();
+    dom['laps-only'].classList.toggle('armed', trimmed);
+    dom['laps-only'].title = trimmed
+      ? 'Trimmed to the timed laps — click to put the ride out and back'
+      : 'Trim to the timed laps, dropping the ride out and back';
     dom['session-info'].dataset.kept = kept < session.duration
       ? ` · ${Clock.formatTime(kept)} kept` : '';
     describeKept(kept);
