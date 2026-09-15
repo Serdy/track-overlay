@@ -25,19 +25,44 @@ function session({ speeds = [10, 8, 9] } = {}) {
   return { rate, laps, channels: { dist: { samples: Float64Array.from(dist) } } };
 }
 
-test('the best lap becomes a distance-to-time curve', () => {
-  const model = LapTimes.build(session());
-  assert.strictEqual(model.best.n, 1);           // the quickest lap is the fastest one
-  assert.ok(model.reference.s.length > 100);
-  // Halfway round the best lap is halfway through its time, at a steady speed.
-  const half = LapTimes.timeAt(model.reference, 500);
-  assert.ok(Math.abs(half - model.best.duration_s / 2) < 0.2, `got ${half}`);
+test('a finished lap becomes a distance-to-time curve', () => {
+  const s = session();
+  const model = LapTimes.build(s);
+  const best = LapTimes.bestBy(model, Infinity);
+  assert.strictEqual(best.lap.n, 1);             // the quickest lap is the fastest one
+  assert.ok(best.curve.s.length > 100);
+  // Halfway round it is halfway through its time, at a steady speed.
+  const half = LapTimes.timeAt(best.curve, 500);
+  assert.ok(Math.abs(half - best.lap.duration_s / 2) < 0.2, `got ${half}`);
+});
+
+test('there is no best lap until one has been finished', () => {
+  const s = session();
+  const model = LapTimes.build(s);
+  const early = LapTimes.stateAt(model, s, s.laps[0].t_start + 5);
+  assert.strictEqual(early.best, null);
+  assert.strictEqual(early.delta, null);         // nothing to be up or down against
+});
+
+test('the first lap finished is the best, however slow', () => {
+  const s = session({ speeds: [5, 10, 8] });     // the opening lap is the slowest of all
+  const model = LapTimes.build(s);
+  const onLapTwo = LapTimes.stateAt(model, s, s.laps[1].t_start + 5);
+  assert.strictEqual(onLapTwo.best.n, 1);
+});
+
+test('the best changes as a quicker lap is completed, not before', () => {
+  const s = session({ speeds: [5, 10, 8] });
+  const model = LapTimes.build(s);
+  // Lap 2 is quicker, but only counts once it has ended.
+  assert.strictEqual(LapTimes.stateAt(model, s, s.laps[1].t_end - 1).best.n, 1);
+  assert.strictEqual(LapTimes.stateAt(model, s, s.laps[2].t_start + 1).best.n, 2);
 });
 
 test('the delta is measured at equal distance, not equal time', () => {
   const s = session();
   const model = LapTimes.build(s);
-  const slow = s.laps[1];                        // 8 m/s against the best lap's 10 m/s
+  const slow = s.laps[1];                        // 8 m/s against lap one's 10 m/s
 
   // A third of the way round the slow lap: it took longer to get there, so it is down.
   const at = slow.t_start + slow.duration_s / 3;
@@ -45,15 +70,19 @@ test('the delta is measured at equal distance, not equal time', () => {
   assert.ok(state.delta > 0, `expected a loss, got ${state.delta}`);
   // And by the end the loss is the whole difference between the laps.
   const end = LapTimes.stateAt(model, s, slow.t_end - 0.2);
-  assert.ok(Math.abs(end.delta - (slow.duration_s - model.best.duration_s)) < 1,
+  const reference = LapTimes.bestBy(model, slow.t_start).lap;
+  assert.ok(Math.abs(end.delta - (slow.duration_s - reference.duration_s)) < 1,
             `got ${end.delta}`);
 });
 
-test('the best lap reads zero against itself rather than jittering', () => {
-  const s = session();
+test('a lap is never its own reference', () => {
+  // Otherwise the quickest lap of the session would read a flat zero all the way round,
+  // which says nothing at all.
+  const s = session({ speeds: [10, 5] });
   const model = LapTimes.build(s);
-  const best = s.laps[0];
-  assert.strictEqual(LapTimes.stateAt(model, s, best.t_start + 5).delta, 0);
+  const onBest = LapTimes.stateAt(model, s, s.laps[0].t_start + 5);
+  assert.strictEqual(onBest.best, null);
+  assert.strictEqual(onBest.delta, null);
 });
 
 test('current, previous and best are reported together', () => {
@@ -73,7 +102,40 @@ test('between laps there is no current time and no delta', () => {
   const state = LapTimes.stateAt(model, s, 1);
   assert.strictEqual(state.current, null);
   assert.strictEqual(state.delta, null);
-  assert.strictEqual(state.best.n, 1);           // the board still shows the best lap
+  assert.strictEqual(state.best, null);          // nothing has been finished yet
+});
+
+test('the delta holds still between grid steps', () => {
+  // A number that twitches every frame cannot be read at a glance, and a glance is the
+  // only way it ever gets read.
+  const s = session({ speeds: [10, 8] });
+  const model = LapTimes.build(s);
+  // Just inside a step, so every offset below stays within the same one.
+  const at = Math.floor((s.laps[1].t_start + 20) / LapTimes.STEP) * LapTimes.STEP + 0.01;
+  const held = LapTimes.stateAt(model, s, at).delta;
+  for (const step of [0.02, 0.08, LapTimes.STEP - 0.02]) {
+    assert.strictEqual(LapTimes.stateAt(model, s, at + step).delta, held);
+  }
+});
+
+test('the delta does move on to the next grid step', () => {
+  const s = session({ speeds: [10, 8] });
+  const model = LapTimes.build(s);
+  const at = Math.floor((s.laps[1].t_start + 20) / LapTimes.STEP) * LapTimes.STEP + 0.01;
+  assert.notStrictEqual(LapTimes.stateAt(model, s, at + LapTimes.STEP).delta,
+                        LapTimes.stateAt(model, s, at).delta);
+});
+
+test('noise in the distance channel does not reach the delta', () => {
+  const clean = session({ speeds: [10, 8] });
+  const noisy = session({ speeds: [10, 8] });
+  const samples = noisy.channels.dist.samples;
+  for (let i = 0; i < samples.length; i += 1) samples[i] += (i % 2 ? 0.6 : -0.6);
+
+  const at = clean.laps[1].t_start + 20;
+  const a = LapTimes.stateAt(LapTimes.build(clean), clean, at).delta;
+  const b = LapTimes.stateAt(LapTimes.build(noisy), noisy, at).delta;
+  assert.ok(Math.abs(a - b) < 0.1, `smoothing let ${Math.abs(a - b)}s of jitter through`);
 });
 
 test('a session with no laps yields nothing to show', () => {

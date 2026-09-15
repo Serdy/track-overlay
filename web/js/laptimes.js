@@ -14,8 +14,20 @@
  * already a channel, is monotonic within a lap, and does not need a track model. It does
  * assume the same line is roughly followed; taking a wide line adds a little distance and
  * reads as a small loss, which is not wrong.
+ *
+ * "Best" means the best lap **completed by now**, not the best of the session. A board
+ * that already knows what the session is going to produce is a replay artefact: on lap
+ * one there is nothing to be down against, and the delta has to appear when the first
+ * lap does. It also keeps the reference honest, since the lap being driven is never
+ * compared against itself.
  */
 const LapTimes = (function () {
+
+  // How the delta is held still: sampled on a quarter-second grid, averaged over the
+  // half second behind it. Both in session time, so a frame always draws the same value.
+  const STEP = 0.25;
+  const SMOOTH_WINDOW = 0.5;
+  const SMOOTH_SAMPLES = 5;
 
   /**
    * Prepares the lookups once for a whole session.
@@ -26,14 +38,32 @@ const LapTimes = (function () {
   function build(session) {
     const laps = session.laps || [];
     const dist = session.channels && session.channels.dist;
-    const best = laps.find((lap) => lap.best) || null;
     return {
       laps,
-      best,
-      // Distance-to-time for the best lap, or null when there is nothing to compare to.
-      reference: best && dist ? curveFor(session, best) : null,
       rate: session.rate,
+      // One distance-to-time curve per lap. Which one is the reference depends on where
+      // the playhead is, so they are all prepared once rather than rebuilt as laps end.
+      curves: dist ? laps.map((lap) => curveFor(session, lap)) : laps.map(() => null),
     };
+  }
+
+  /**
+   * The quickest lap finished by this moment, and its curve.
+   *
+   * A lap counts as finished when it ends, so the one being driven never becomes its own
+   * reference - which would read zero all the way round and mean nothing.
+   */
+  function bestBy(model, time) {
+    let best = null;
+    let curve = null;
+    model.laps.forEach((lap, i) => {
+      if (lap.t_end > time) return;
+      if (best === null || lap.duration_s < best.duration_s) {
+        best = lap;
+        curve = model.curves[i];
+      }
+    });
+    return { lap: best, curve };
   }
 
   /** The best lap as two parallel arrays: metres from the line, seconds since it. */
@@ -86,24 +116,50 @@ const LapTimes = (function () {
     const index = laps.findIndex((lap) => time >= lap.t_start && time < lap.t_end);
     const lap = index >= 0 ? laps[index] : null;
     const previous = index > 0 ? laps[index - 1] : null;
+    const best = bestBy(model, time);
 
     const state = {
-      best: model.best ? { n: model.best.n, time: model.best.duration_s } : null,
+      best: best.lap ? { n: best.lap.n, time: best.lap.duration_s } : null,
       previous: previous ? { n: previous.n, time: previous.duration_s } : null,
       current: lap ? { n: lap.n, time: time - lap.t_start } : null,
       delta: null,
     };
-    if (!lap || !model.reference) return state;
-
-    const dist = session.channels.dist.samples;
-    const at = Math.min(dist.length - 1, Math.max(0, Math.round(time * model.rate)));
-    const start = Math.min(dist.length - 1, Math.max(0, Math.round(lap.t_start * model.rate)));
-    const reference = timeAt(model.reference, dist[at] - dist[start]);
-    if (reference !== null) state.delta = (time - lap.t_start) - reference;
-    // The best lap compared against itself is zero by construction; showing a jittering
-    // ±0.01 there would only look like a fault.
-    if (model.best && lap.n === model.best.n) state.delta = 0;
+    if (lap && best.curve) state.delta = steadyDelta(model, session, lap, best.curve, time);
     return state;
+  }
+
+  /**
+   * The delta, held still enough to read.
+   *
+   * Raw, it is the difference of two noisy quantities and twitches by hundredths many
+   * times a second - unreadable at a glance, which is the only way anyone reads it. Two
+   * things settle it: the value is sampled on a fixed grid rather than every frame, and
+   * each sample is the mean over a short window.
+   *
+   * Both are keyed to session time, never to the wall clock, so the same frame always
+   * produces the same number. The preview and the render draw through this same code,
+   * and a value that depended on when it was asked would make them disagree.
+   */
+  function steadyDelta(model, session, lap, curve, time) {
+    const at = Math.floor(time / STEP) * STEP;
+    let total = 0;
+    let taken = 0;
+    for (let i = 0; i < SMOOTH_SAMPLES; i += 1) {
+      const moment = at - (i * SMOOTH_WINDOW) / SMOOTH_SAMPLES;
+      if (moment < lap.t_start) break;
+      const value = rawDelta(model, session, lap, curve, moment);
+      if (value === null) continue;
+      total += value;
+      taken += 1;
+    }
+    return taken ? total / taken : null;
+  }
+
+  function rawDelta(model, session, lap, curve, time) {
+    const dist = session.channels.dist.samples;
+    const index = (t) => Math.min(dist.length - 1, Math.max(0, Math.round(t * model.rate)));
+    const reference = timeAt(curve, dist[index(time)] - dist[index(lap.t_start)]);
+    return reference === null ? null : (time - lap.t_start) - reference;
   }
 
   /** "1:03.7" — minutes only when there are any, and tenths, as a pit board reads. */
@@ -124,7 +180,7 @@ const LapTimes = (function () {
     return `${rounded > 0 ? '+' : (rounded < 0 ? '-' : '')}${Math.abs(rounded).toFixed(digits)}`;
   }
 
-  return { build, curveFor, timeAt, stateAt, format, formatDelta };
+  return { STEP, build, curveFor, timeAt, bestBy, stateAt, format, formatDelta };
 }());
 
 if (typeof module !== 'undefined' && module.exports) module.exports = LapTimes;
