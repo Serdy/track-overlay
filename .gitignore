@@ -5,12 +5,18 @@ __pycache__/
 out/
 .DS_Store
 
-# Исходное видео — гигабайты, в репозиторий не идёт.
-# CSV и VBO остаются: они мелкие и работают как фикстуры.
-data/*.MP4
-data/*.LRV
-data/*.THM
-out/
+# Source video runs to gigabytes and stays out of the repository. CSV and VBO are small
+# enough to keep, and double as fixtures.
+*.MP4
+*.LRV
+*.THM
+# A project's own state: absolute paths to footage on this machine, plus a session that
+# is rebuilt from the sources in seconds. Only the telemetry itself is worth committing.
+data/*/out/
+data/*/project.json
+data/*/session.json
+data/*/layout.json
+data_bak/
 
 # Browser automation artifacts
 .playwright-cli/

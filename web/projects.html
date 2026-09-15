@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>track-overlay</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="home">
+  <header class="bar">
+    <strong>track-overlay</strong>
+    <span class="muted">RaceBox telemetry onto GoPro video</span>
+    <span class="spacer"></span>
+    <button id="new-project" class="bar-btn">＋ New project</button>
+  </header>
+
+  <main class="home-main">
+    <div id="new-form" class="home-new" hidden>
+      <input id="new-title" type="text" placeholder="Slovakia Ring, 12 September"
+             autocomplete="off" spellcheck="false">
+      <code class="muted" id="new-slug"></code>
+      <span class="spacer"></span>
+      <button id="new-cancel">Cancel</button>
+      <button id="new-create">Create</button>
+    </div>
+
+    <div id="cards" class="home-cards"></div>
+    <p class="muted" id="home-status"></p>
+  </main>
+
+  <script src="js/projects.js"></script>
+  <script src="js/home.js"></script>
+</body>
+</html>

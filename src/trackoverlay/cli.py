@@ -9,6 +9,7 @@ from pathlib import Path
 import json
 
 from . import render as render_module
+from .projects import ProjectError
 from .server import serve
 from .session import SessionError, build_session
 
@@ -35,9 +36,19 @@ def _build(args: argparse.Namespace) -> int:
 
 
 def _serve(args: argparse.Namespace) -> int:
-    if not args.session.exists():
-        raise SessionError(f"no such file {args.session} — run build first")
-    serve(args.session, port=args.port, open_browser=not args.no_browser)
+    """Opens the editor. With no arguments it opens the project list instead of refusing.
+
+    That is the whole point: everything the tool does - picking files, building a session,
+    checking the sync - now happens in the page, so there is nothing left to do first.
+    """
+    if args.session is not None:
+        if not args.session.exists():
+            raise SessionError(f"no such file {args.session} — run build first")
+        serve(args.data, session_path=args.session, port=args.port,
+              open_browser=not args.no_browser)
+        return 0
+    serve(args.data, project=args.project, port=args.port,
+          open_browser=not args.no_browser)
     return 0
 
 
@@ -76,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="trackoverlay",
         description="Overlay RaceBox telemetry onto GoPro video")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     build = sub.add_parser("build", help="assemble session.json from the session files")
     build.add_argument("files", nargs="+", type=Path,
@@ -86,7 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     build.set_defaults(func=_build)
 
     run = sub.add_parser("serve", help="open the editor in a browser")
-    run.add_argument("session", type=Path, nargs="?", default=Path("out/session.json"))
+    run.add_argument("session", type=Path, nargs="?", default=None,
+                     help="a session file to open directly; without it the project list opens")
+    run.add_argument("--data", type=Path, default=Path("data"),
+                     help="where projects live (default: data/)")
+    run.add_argument("--project", default=None, help="open this project straight away")
     run.add_argument("-p", "--port", type=int, default=8712)
     run.add_argument("--no-browser", action="store_true")
     run.set_defaults(func=_serve)
@@ -102,9 +117,12 @@ def main(argv: list[str] | None = None) -> int:
     out.set_defaults(func=_render)
 
     args = parser.parse_args(argv)
+    if args.command is None:
+        # `trackoverlay` on its own opens the browser, like any other desktop tool.
+        args = parser.parse_args([*(argv or []), "serve"])
     try:
         return args.func(args)
-    except (SessionError, render_module.RenderError) as err:
+    except (SessionError, ProjectError, render_module.RenderError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 2
 

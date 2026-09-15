@@ -9,6 +9,10 @@
 
 * { box-sizing: border-box; }
 
+/* Any display: rule outranks the hidden attribute, and the failure is silent - an
+   invisible panel keeps its space, or worse, covers the page and eats every click. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   height: 100vh;
@@ -207,15 +211,41 @@ code { font-variant-numeric: tabular-nums; }
   font: inherit;
 }
 
-.nudge {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 12px;
+/* --- the sync check ---------------------------------------------------------------- */
+
+.sync {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
 }
 
-.nudge input { width: 110px; }
+.sync-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.sync input[type="range"] { width: 200px; }
+.sync select, .picker input, .sync-row code { font: inherit; font-size: 13px; }
+
+.sync select, .picker input {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0c0e12;
+  color: var(--text);
+}
+
+/* The speed trace either side of the playhead, for comparing against the frame. */
+.sync-graph {
+  width: 100%;
+  height: 56px;
+  margin-top: 8px;
+  border-radius: 6px;
+  background: #0c0e12;
+}
+
+.warn { color: var(--accent); }
 
 /* The overlay canvas takes pointer events only while the layout is being edited. */
 #overlay.editing {
@@ -276,10 +306,6 @@ code { font-variant-numeric: tabular-nums; }
   background: rgba(0, 0, 0, 0.6);
 }
 
-/* display:grid above outranks the hidden attribute, and an invisible sheet over the
-   whole page swallows every click behind it. */
-.picker[hidden] { display: none; }
-
 .picker-box {
   width: min(760px, 92vw);
   max-height: 84vh;
@@ -335,3 +361,77 @@ code { font-variant-numeric: tabular-nums; }
 .picker button:disabled { opacity: 0.4; cursor: default; }
 
 .picker-list .muted { border: 0; cursor: default; }
+
+/* --- the project list ------------------------------------------------------------- */
+
+body.home { grid-template-rows: auto 1fr; }
+
+.home-main { padding: 18px; overflow: auto; }
+
+.home-new {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.home-new input {
+  flex: 1;
+  max-width: 420px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0c0e12;
+  color: var(--text);
+  font: inherit;
+}
+
+.home-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.card p { margin: 0; }
+.card-head { display: flex; gap: 10px; align-items: baseline; }
+.card-head strong { flex: 1; }
+.card-foot { display: flex; gap: 8px; align-items: center; }
+
+.badge {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card-built .badge { border-color: #2f7d32; color: #7bc47f; }
+.card-needs .badge, .card-broken .badge { border-color: var(--accent); color: var(--accent); }
+
+.home button, .picker button, .sync button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #22262e;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.home button:hover { border-color: var(--muted); }
+.home button:disabled { opacity: 0.4; cursor: default; }

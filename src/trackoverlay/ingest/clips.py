@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,6 +42,9 @@ class Chunk:
     end_utc: float | None
     proxy: Path | None
     size: tuple[int, int] = (0, 0)
+    # The extracted GPMF stream, kept because reading it costs a full pass over a file
+    # that runs to four gigabytes - and the alignment step needs the very same bytes.
+    gpmd: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -117,14 +121,16 @@ def probe_size(path: Path) -> tuple[int, int]:
 
 def _load_chunk(path: Path, index: int) -> Chunk:
     start = end = None
+    stream = None
     try:
-        window = gpmf.parse_window(gpmf.extract_gpmd(path))
+        stream = gpmf.extract_gpmd(path)
+        window = gpmf.parse_window(stream)
         if window.fixed_blocks:          # stamps exist without a fix, but trust them less
             start, end = window.start_utc, window.end_utc
     except (gpmf.GpmfError, subprocess.CalledProcessError):
         pass                             # video without telemetry is a valid input too
     return Chunk(path, index, probe_duration(path), start, end, find_proxy(path),
-                 probe_size(path))
+                 probe_size(path), stream)
 
 
 def _check_joints(chunks: list[Chunk]) -> None:
@@ -142,8 +148,13 @@ def _check_joints(chunks: list[Chunk]) -> None:
                 f"up to {MAX_JOINT_GAP_S} s allowed — are these different recordings?")
 
 
-def discover(paths: list[Path]) -> list[Clip]:
-    """Groups files by recording number and assembles continuous clips."""
+def discover(paths: list[Path],
+             *, on_chunk: Callable[[int, Path], None] | None = None) -> list[Clip]:
+    """Groups files by recording number and assembles continuous clips.
+
+    Reading a chunk means three ffprobe calls and one ffmpeg pass, which is where the
+    minutes of a build go - hence `on_chunk`, so something can be shown while it happens.
+    """
     groups: dict[str, list[tuple[int, Path]]] = {}
     for path in paths:
         parsed = parse_name(path)
@@ -157,7 +168,11 @@ def discover(paths: list[Path]) -> list[Clip]:
         indexes = [i for i, _ in entries]
         if len(set(indexes)) != len(indexes):
             raise ClipError(f"recording {recording}: a chunk is listed twice")
-        chunks = [_load_chunk(p, i) for i, p in sorted(entries)]
+        chunks = []
+        for i, p in sorted(entries):
+            if on_chunk is not None:
+                on_chunk(len(chunks), p)
+            chunks.append(_load_chunk(p, i))
         _check_joints(chunks)
         clips.append(Clip(recording, chunks))
     return clips

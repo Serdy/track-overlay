@@ -122,3 +122,35 @@ def test_discover_real_sessions():
 
     assert not found["3430"].has_gps          # GPS never caught a single fix
     assert found["3430"].duration_s == pytest.approx(1341.6, abs=1.0)
+
+
+def test_the_gpmf_stream_is_extracted_once_per_chunk(tmp_path, monkeypatch):
+    """Extracting it costs a full ffmpeg pass over a four gigabyte file.
+
+    It used to happen twice: once here and once again during alignment, which read the
+    same bytes back out of the same file for the same clip.
+    """
+    video = tmp_path / "GH013429.MP4"
+    video.write_bytes(b"x")
+
+    calls = []
+    monkeypatch.setattr(clips.gpmf, "extract_gpmd", lambda path: calls.append(path) or b"")
+    monkeypatch.setattr(clips.gpmf, "parse_window",
+                        lambda buf: clips.gpmf.Window(0.0, 0.0, 0, 0))
+    monkeypatch.setattr(clips, "probe_duration", lambda path: 700.0)
+    monkeypatch.setattr(clips, "probe_size", lambda path: (1920, 1080))
+
+    found = clips.discover([video])
+    assert calls == [video]
+    assert found[0].chunks[0].gpmd == b""
+
+
+def test_discovery_reports_every_chunk_it_reads(tmp_path, monkeypatch):
+    for index in (1, 2):
+        (tmp_path / f"GH{index:02d}3429.MP4").write_bytes(b"x")
+    monkeypatch.setattr(clips, "_load_chunk",
+                        lambda path, index: chunk(index, start=index * 700.0,
+                                                  end=index * 700.0 + 700.0))
+    seen = []
+    clips.discover(sorted(tmp_path.glob("*.MP4")), on_chunk=lambda i, p: seen.append(p.name))
+    assert seen == ["GH013429.MP4", "GH023429.MP4"]

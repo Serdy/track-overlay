@@ -5,7 +5,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
-DATA = ROOT / "data"
+# The sample project: telemetry is committed, the video that goes with it is not.
+DATA = ROOT / "data" / "slovakia-ring-2026-09-12"
 
 
 def utc(text: str) -> float:

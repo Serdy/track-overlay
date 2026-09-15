@@ -33,7 +33,7 @@ const ExportUI = (function () {
         throw new Error('cancelled');
       }
       const job = await (await fetch(`/api/render/${id}`)).json();
-      onProgress(job.progress);
+      onProgress(job.progress, job);
       if (job.state === 'done') return job;
       if (job.state !== 'running') throw new Error(job.message || job.state);
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
@@ -46,7 +46,7 @@ const ExportUI = (function () {
    * `duration` limits the render to the first N seconds, which is how a layout gets
    * checked without waiting for the full session.
    */
-  async function run({ output, drawFrame, duration, name, kept, toSession,
+  async function run({ base = '', output, drawFrame, duration, name, kept, toSession,
                        onStage, onProgress, signal }) {
     const width = output.width;
     const height = output.height;
@@ -64,10 +64,10 @@ const ExportUI = (function () {
     });
 
     onStage(`uploading the layer (${(blob.size / 1e6).toFixed(1)} MB)`);
-    await post('/api/overlay', blob, blob.type);
+    await post(`${base}/api/overlay`, blob, blob.type);
 
     onStage('composing with ffmpeg');
-    const job = await post('/api/render', JSON.stringify({ duration: to, name }),
+    const job = await post(`${base}/api/render`, JSON.stringify({ duration: to, name }),
                            'application/json');
     const finished = await follow(job.id,
       (done) => onProgress(OVERLAY_SHARE + done * (1 - OVERLAY_SHARE)), signal);

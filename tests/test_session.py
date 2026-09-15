@@ -107,3 +107,16 @@ def test_cli_build_with_video(tmp_path, capsys):
     assert clip["sync"]["reliable"] is True
     assert clip["offset_s"] == pytest.approx(-116.1, abs=0.5)
     assert "✓ cam_3429" in capsys.readouterr().out
+
+
+def test_progress_is_reported_and_monotonic():
+    """A build runs for minutes; a bar that sits at 10% the whole time says nothing."""
+    seen = []
+    build_session([CSV_LEAN, CSV_CORNERING, VBO], [], track="Slovakia Ring",
+                  on_progress=lambda done, stage: seen.append((done, stage)))
+
+    fractions = [done for done, _ in seen]
+    assert fractions == sorted(fractions)
+    assert 0.0 <= fractions[0] and fractions[-1] <= 1.0
+    assert all(stage for _, stage in seen)
+    assert any("telemetry" in stage for _, stage in seen)

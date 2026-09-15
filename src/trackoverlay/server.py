@@ -1,9 +1,14 @@
-"""A local HTTP server: serves the editor, the session and the video.
+"""A local HTTP server: serves the project list, the editor, the session and the video.
 
 A server cannot be avoided here, even though the viewer in the neighbouring
 ``DDA_Reader`` lives straight on ``file://``. The reason is range requests: the browser
 seeks through video by asking for pieces of the file, and that machinery is unavailable
 on ``file://``. Besides, something has to launch ffmpeg when the export button is hit.
+
+Every project is addressed in the URL — ``/p/<name>/api/session`` — rather than the server
+holding a "current project". Two tabs on two projects then cannot corrupt each other's
+files, and a ``<video>`` tag, which keeps issuing range requests for minutes, cannot be
+redirected mid-playback into another project's footage.
 
 Video is served **from a whitelist only**, taken from the session itself and addressed
 by clip and chunk number. Arbitrary paths are never exposed, so there is nothing to
@@ -24,6 +29,10 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
+
+from . import projects
+from .projects import Project, ProjectError
 
 WEB_ROOT = Path(__file__).resolve().parent.parent.parent / "web"
 CHUNK = 1 << 20                       # 1 MiB per socket write
@@ -42,17 +51,17 @@ end repeat
 return out
 """
 
-# What the tool can read. Anything else picked in the dialog is ignored.
-READABLE = {".mp4", ".mov", ".csv", ".vbo"}
+READABLE = projects.READABLE
 _RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 class Job:
-    """One background render, watched by the browser through polling."""
+    """One background job — a build or a render — watched by the browser through polling."""
 
     def __init__(self, identifier: str):
         self.id = identifier
         self.progress = 0.0
+        self.stage = ""
         self.state = "running"          # running | done | failed | cancelled
         self.message = ""
         self.output: Path | None = None
@@ -63,12 +72,17 @@ class Job:
             "id": self.id,
             "state": self.state,
             "progress": round(self.progress, 4),
+            "stage": self.stage,
             "message": self.message,
             "output": str(self.output) if self.output else None,
         }
 
 
 JOBS: dict[str, Job] = {}
+
+# One build at a time per project: two of them would race to write the same session.
+_BUILDS: dict[str, str] = {}
+_BUILD_LOCK = threading.Lock()
 
 
 class RangeError(Exception):
@@ -98,6 +112,42 @@ class Media:
         return self.full.get(key)
 
 
+class MediaCache:
+    """Whitelists by session file, refreshed when the file changes.
+
+    Rebuilding it per request is out of the question — a session is megabytes of JSON and
+    a single scrub costs hundreds of range requests — and caching it for the server's
+    lifetime was what forced the old design to reach back and mutate handler state after
+    a build. Keying on the file's own mtime does both jobs and needs no invalidation call.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._entries: dict[Path, tuple[tuple[int, int], Media]] = {}
+
+    def get(self, session_path: Path) -> Media:
+        try:
+            stat = session_path.stat()
+        except OSError:
+            return Media({}, {})
+        key = (stat.st_mtime_ns, stat.st_size)
+        with self._lock:
+            cached = self._entries.get(session_path)
+            if cached is not None and cached[0] == key:
+                return cached[1]
+        try:
+            media = Media.from_session(
+                json.loads(session_path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            return Media({}, {})
+        with self._lock:
+            self._entries[session_path] = (key, media)
+        return media
+
+
+MEDIA = MediaCache()
+
+
 def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
     """``Range: bytes=…`` to ``(first byte, last byte)``, inclusive.
 
@@ -125,9 +175,8 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "trackoverlay"
-    session_path: Path
-    layout_path: Path
-    media: Media
+    data_root: Path
+    bound: Project | None = None        # set when serving a single session file
 
     def log_message(self, fmt, *args):      # quieter than the default logger
         pass
@@ -142,9 +191,27 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _error(self, status: HTTPStatus, message: str) -> None:
-        self._send(status, json.dumps({"error": message}, ensure_ascii=False).encode(),
+    def _json(self, payload: dict | list, status: HTTPStatus = HTTPStatus.OK) -> None:
+        self._send(status, json.dumps(payload, ensure_ascii=False).encode(),
                    "application/json; charset=utf-8")
+
+    def _error(self, status: HTTPStatus, message: str) -> None:
+        self._json({"error": message}, status)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _body(self) -> dict | None:
+        """The JSON body of a POST, or None once the error has been sent."""
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            return json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError as err:
+            self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
+            return None
 
     def _send_file(self, path: Path) -> None:
         """Serves a file, honouring partial requests."""
@@ -155,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             span = parse_range(self.headers.get("Range"), size)
-        except RangeError as err:
+        except RangeError:
             self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
             self.send_header("Content-Range", f"bytes */{size}")
             self.send_header("Content-Length", "0")
@@ -194,33 +261,69 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(block)
                 remaining -= len(block)
 
-    # --- routes ----------------------------------------------------------------
+    # --- routing ----------------------------------------------------------------
+
+    def _split(self, path: str) -> tuple[Project | None, str] | None:
+        """Peels ``/p/<name>`` off the front. Returns None once an error has been sent.
+
+        The name arrives from outside on every single request, so it goes through exactly
+        one resolver, and that resolver is the only place a name becomes a path.
+        """
+        if not path.startswith("/p/"):
+            return self.bound, path         # legacy mode, or a server-level route
+        parts = path.split("/", 3)          # ['', 'p', name, rest]
+        name = unquote(parts[2])
+        rest = "/" + (parts[3] if len(parts) > 3 else "")
+        try:
+            return projects.read(self.data_root, name), rest
+        except ProjectError as err:
+            self._error(HTTPStatus.NOT_FOUND, str(err))
+            return None
 
     def do_HEAD(self):
         self.do_GET()
 
     def do_GET(self):
-        path, _, query = self.path.partition("?")
+        raw, _, query = self.path.partition("?")
 
-        if path in ("/", "/index.html"):
-            return self._send_index()
-        if path == "/api/session":
-            return self._send_file(self.session_path)
-        if path == "/api/layout":
-            if not self.layout_path.exists():
-                return self._error(HTTPStatus.NOT_FOUND, "no layout saved yet")
-            return self._send_file(self.layout_path)
-        if path.startswith("/api/render/"):
-            job = JOBS.get(path.rsplit("/", 1)[-1])
+        if raw == "/api/projects":
+            return self._json([p.as_dict() for p in projects.discover(self.data_root)])
+        if raw.startswith("/api/render/"):
+            job = JOBS.get(raw.rsplit("/", 1)[-1])
             if job is None:
                 return self._error(HTTPStatus.NOT_FOUND, "no such render job")
-            return self._send(HTTPStatus.OK,
-                              json.dumps(job.as_dict()).encode(),
-                              "application/json; charset=utf-8")
-        if path.startswith("/media/"):
-            return self._serve_media(path, query)
-        if path.startswith("/api/output/"):
-            return self._serve_output(path)
+            return self._json(job.as_dict())
+        if raw == "/p" or (raw.startswith("/p/") and raw.count("/") == 2):
+            return self._redirect(raw + "/")    # /p/demo -> /p/demo/, so js/ resolves
+
+        split = self._split(raw)
+        if split is None:
+            return
+        project, path = split
+
+        if project is None:
+            if path in ("/", "/index.html"):
+                return self._send_page("projects.html")
+            if path.startswith("/api/") or path.startswith("/media/"):
+                return self._error(HTTPStatus.NOT_FOUND,
+                                   f"{path} needs a project: /p/<name>{path}")
+        else:
+            if path in ("/", "/index.html"):
+                return self._send_page("index.html")
+            if path == "/api/project":
+                return self._json(project.as_dict())
+            if path == "/api/session":
+                if not project.has_session():
+                    return self._error(HTTPStatus.NOT_FOUND, "this project is not built yet")
+                return self._send_file(project.session_path)
+            if path == "/api/layout":
+                if not project.layout_path.exists():
+                    return self._error(HTTPStatus.NOT_FOUND, "no layout saved yet")
+                return self._send_file(project.layout_path)
+            if path.startswith("/media/"):
+                return self._serve_media(project, path, query)
+            if path.startswith("/api/output/"):
+                return self._serve_output(project, path)
 
         # Editor statics. Canonicalise the path and make sure it stayed inside web/ —
         # otherwise ../ would lead out.
@@ -229,70 +332,70 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(HTTPStatus.NOT_FOUND, f"no resource {path}")
         return self._send_file(target)
 
-    def _serve_media(self, path: str, query: str) -> None:
-        parts = path.strip("/").split("/")
-        if len(parts) != 3:
-            return self._error(HTTPStatus.BAD_REQUEST, "expected /media/<clip>/<index>")
-        _, clip_id, index = parts
-        if not index.isdigit():
-            return self._error(HTTPStatus.BAD_REQUEST, "the chunk index must be a number")
-        target = self.media.resolve(clip_id, int(index), prefer_proxy="proxy=1" in query)
-        if target is None:
-            return self._error(HTTPStatus.NOT_FOUND, f"clip {clip_id}/{index} is not in the session")
-        return self._send_file(target)
-
     def do_POST(self):
-        if self.path == "/api/overlay":
-            return self._receive_overlay()
-        if self.path == "/api/render":
-            return self._start_render()
-        if self.path == "/api/reveal":
-            return self._reveal_output()
-        if self.path == "/api/build":
-            return self._start_build()
-        if self.path == "/api/choose":
+        raw, _, _ = self.path.partition("?")
+
+        if raw == "/api/choose":
             return self._choose_files()
-        if self.path.startswith("/api/render/") and self.path.endswith("/cancel"):
-            job = JOBS.get(self.path.split("/")[3])
+        if raw == "/api/projects":
+            return self._create_project()
+        if raw.startswith("/api/render/") and raw.endswith("/cancel"):
+            job = JOBS.get(raw.split("/")[3])
             if job is None:
                 return self._error(HTTPStatus.NOT_FOUND, "no such render job")
             job.cancel.set()
-            return self._send(HTTPStatus.OK, b'{"cancelled":true}', "application/json")
-        if self.path != "/api/layout":
-            return self._error(HTTPStatus.NOT_FOUND, f"no route {self.path}")
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length)
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as err:
-            return self._error(HTTPStatus.BAD_REQUEST, f"the layout does not parse: {err}")
-        self.layout_path.parent.mkdir(parents=True, exist_ok=True)
-        self.layout_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._send(HTTPStatus.OK, b'{"saved":true}', "application/json")
+            return self._json({"cancelled": True})
 
+        split = self._split(raw)
+        if split is None:
+            return
+        project, path = split
+        if project is None:
+            return self._error(HTTPStatus.NOT_FOUND,
+                               f"{path} needs a project: /p/<name>{path}")
 
-    def _send_index(self) -> None:
-        """Serves the editor page with a version stamped onto every local asset.
+        if path == "/api/layout":
+            return self._save_layout(project)
+        if path == "/api/sources":
+            return self._edit_sources(project)
+        if path == "/api/build":
+            return self._start_build(project)
+        if path == "/api/sync":
+            return self._confirm_sync(project)
+        if path == "/api/overlay":
+            return self._receive_overlay(project)
+        if path == "/api/render":
+            return self._start_render(project)
+        if path == "/api/reveal":
+            return self._reveal_output(project)
+        return self._error(HTTPStatus.NOT_FOUND, f"no route {self.path}")
+
+    # --- pages ------------------------------------------------------------------
+
+    def _send_page(self, name: str) -> None:
+        """Serves a page with a version stamped onto every local asset.
 
         `Cache-Control: no-store` only helps from the moment it is first seen. A browser
         that cached a script before then will keep serving it on an ordinary reload, and
         the symptom - half the editor quietly not working - gives no hint of the cause.
         A stamp derived from the file's own mtime sidesteps the cache entirely.
+
+        The stamped URLs are rooted. The editor is served from /p/<name>/, where a
+        relative `js/state.js` would resolve to /p/<name>/js/state.js and 404 — silently,
+        since a missing script reports nothing to the page.
         """
-        page = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
+        page = (WEB_ROOT / name).read_text(encoding="utf-8")
 
         def stamp(match: re.Match) -> str:
             attribute, url = match.group(1), match.group(2)
-            if "//" in url:
-                return match.group(0)            # leave anything remote alone
+            if "//" in url or url.startswith("/"):
+                return match.group(0)            # leave anything remote or rooted alone
             asset = (WEB_ROOT / url).resolve()
             if not asset.is_file():
                 return match.group(0)
-            return f'{attribute}="{url}?v={int(asset.stat().st_mtime)}"'
+            return f'{attribute}="/{url}?v={int(asset.stat().st_mtime)}"'
 
-        page = re.sub(r'(src|href)="([^"]+)"', stamp, page)
-        body = page.encode("utf-8")
+        body = re.sub(r'(src|href)="([^"]+)"', stamp, page).encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -300,6 +403,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    # --- projects ---------------------------------------------------------------
+
+    def _create_project(self) -> None:
+        request = self._body()
+        if request is None:
+            return
+        try:
+            project = projects.create(self.data_root, (request.get("title") or "").strip())
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
+        self._json(project.as_dict(), HTTPStatus.CREATED)
+
+    def _edit_sources(self, project: Project) -> None:
+        """Registers files picked in the dialog, or drops one."""
+        request = self._body()
+        if request is None:
+            return
+        try:
+            for path in request.get("remove") or []:
+                project = projects.remove_source(project, Path(path))
+            added = [Path(p) for p in request.get("files") or []]
+            if added:
+                project = projects.add_sources(project, added)
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
+        self._json(project.as_dict())
 
     def _choose_files(self) -> None:
         """Opens the system file dialog and returns what was picked.
@@ -319,71 +449,134 @@ class Handler(BaseHTTPRequestHandler):
                               capture_output=True, text=True)
         if done.returncode != 0 or "User canceled" in done.stderr:
             # Cancelling is an ordinary outcome, not a failure.
-            return self._send(HTTPStatus.OK, b'{"files":[],"cancelled":true}',
-                              "application/json")
+            return self._json({"files": [], "cancelled": True})
 
         files = [line for line in done.stdout.splitlines() if line.strip()]
         usable = [f for f in files if Path(f).suffix.lower() in READABLE]
-        payload = {"files": usable,
-                   "ignored": [Path(f).name for f in files if f not in usable]}
-        self._send(HTTPStatus.OK, json.dumps(payload).encode(),
-                   "application/json; charset=utf-8")
+        self._json({"files": usable,
+                    "ignored": [Path(f).name for f in files if f not in usable]})
 
-    def _start_build(self) -> None:
-        """Assembles a session from files the editor picked, in the background."""
+    # --- building ---------------------------------------------------------------
+
+    def _start_build(self, project: Project) -> None:
+        """Assembles the session from the project's own files, in the background."""
         from .session import build_session
 
-        length = int(self.headers.get("Content-Length") or 0)
+        request = self._body()
+        if request is None:
+            return
         try:
-            request = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError as err:
-            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
+            added = [Path(p) for p in request.get("files") or []]
+            if added:
+                project = projects.add_sources(project, added)
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
 
-        picked = [Path(p) for p in request.get("files", [])]
-        if not picked:
-            return self._error(HTTPStatus.BAD_REQUEST, "no files were chosen")
-        unusable = [str(p) for p in picked
-                    if p.suffix.lower() not in READABLE or not p.is_file()]
-        if unusable:
-            return self._error(HTTPStatus.BAD_REQUEST, f"cannot read: {unusable}")
+        found = projects.sources(project)
+        telemetry = [p for p in found if p.suffix.lower() in (".csv", ".vbo")]
+        videos = [p for p in found if p.suffix.lower() in (".mp4", ".mov")]
+        if not telemetry:
+            return self._error(HTTPStatus.BAD_REQUEST,
+                               "this project has no RaceBox export to build from")
 
-        telemetry = [p for p in picked if p.suffix.lower() in (".csv", ".vbo")]
-        videos = [p for p in picked if p.suffix.lower() in (".mp4", ".mov")]
+        with _BUILD_LOCK:
+            running = JOBS.get(_BUILDS.get(project.name, ""))
+            if running is not None and running.state == "running":
+                return self._json(running.as_dict())
+            job = Job(uuid.uuid4().hex[:12])
+            JOBS[job.id] = job
+            _BUILDS[project.name] = job.id
 
-        job = Job(uuid.uuid4().hex[:12])
-        JOBS[job.id] = job
+        track = (request.get("track") or project.track or "").strip()
+        # The thread outlives this handler instance, so it closes over values, never self.
+        session_path = project.session_path
+        manual = dict(project.manual_sync)
+        root, name = self.data_root, project.name
 
         def work() -> None:
             try:
-                job.progress = 0.1
-                session = build_session(telemetry, videos, track=request.get("track", ""))
-                job.progress = 0.9
-                session.write(self.session_path)
-                job.output = self.session_path
-                # The whitelist is derived from the session, so it has to follow it.
-                type(self).media = Media.from_session(json.loads(
-                    self.session_path.read_text(encoding="utf-8")))
+                def tick(done: float, stage: str) -> None:
+                    job.progress, job.stage = done, stage
+
+                session = build_session(telemetry, videos, track=track,
+                                        manual_s=manual, on_progress=tick)
+                session.write(session_path)
+                projects.mark_built(projects.read(root, name), track)
+                job.output = session_path
                 job.state = "done"
-                job.progress = 1.0
+                job.progress, job.stage = 1.0, "done"
             except Exception as err:                 # noqa: BLE001 - reported to the browser
                 job.state = "failed"
                 job.message = str(err)[:500]
 
         threading.Thread(target=work, daemon=True).start()
-        self._send(HTTPStatus.OK, json.dumps(job.as_dict()).encode(),
-                   "application/json; charset=utf-8")
+        self._json(job.as_dict())
 
-    def _serve_output(self, path: str) -> None:
+    def _confirm_sync(self, project: Project) -> None:
+        """Stores the correction a person confirmed by eye.
+
+        It lands in two files on purpose: `project.json` keeps the human decision, which
+        must survive a rebuild, and `session.json` keeps the total, because that is the
+        number the renderer reads.
+        """
+        request = self._body()
+        if request is None:
+            return
+        if not project.has_session():
+            return self._error(HTTPStatus.BAD_REQUEST, "this project is not built yet")
+
+        clip_id = request.get("clip")
+        try:
+            payload = json.loads(project.session_path.read_text(encoding="utf-8"))
+            if clip_id is not None:
+                manual = float(request.get("manual_s") or 0.0)
+                _apply_offset(payload, clip_id, manual)
+                projects.set_manual_sync(project, clip_id, manual)
+            if request.get("confirmed"):
+                payload.setdefault("session", {})["sync_confirmed"] = True
+        except (ValueError, TypeError) as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
+        project.session_path.write_text(json.dumps(payload, ensure_ascii=False),
+                                        encoding="utf-8")
+        self._json({"clips": payload.get("clips", [])})
+
+    # --- media and output --------------------------------------------------------
+
+    def _serve_media(self, project: Project, path: str, query: str) -> None:
+        parts = path.strip("/").split("/")
+        if len(parts) != 3:
+            return self._error(HTTPStatus.BAD_REQUEST, "expected /media/<clip>/<index>")
+        _, clip_id, index = parts
+        if not index.isdigit():
+            return self._error(HTTPStatus.BAD_REQUEST, "the chunk index must be a number")
+        media = MEDIA.get(project.session_path)
+        target = media.resolve(clip_id, int(index), prefer_proxy="proxy=1" in query)
+        if target is None:
+            return self._error(HTTPStatus.NOT_FOUND,
+                               f"clip {clip_id}/{index} is not in the session")
+        return self._send_file(target)
+
+    def _save_layout(self, project: Project) -> None:
+        request = self._body()
+        if request is None:
+            return
+        project.layout_path.parent.mkdir(parents=True, exist_ok=True)
+        project.layout_path.write_text(
+            json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._json({"saved": True})
+
+    def _serve_output(self, project: Project, path: str) -> None:
         """Hands back a rendered file as a download.
 
-        Only the output directory is reachable, and only by bare filename: the editor
-        never needs to name anything else, and a path that cannot contain a separator
-        cannot escape.
+        Only the project's output directory is reachable, and only by bare filename: the
+        editor never needs to name anything else, and a path that cannot contain a
+        separator cannot escape.
         """
-        name = path.rsplit("/", 1)[-1]
-        if not name or "/" in name or name.startswith("."):
-            return self._error(HTTPStatus.BAD_REQUEST, "bad output name")
-        target = self.session_path.parent / name
+        name = unquote(path.rsplit("/", 1)[-1])
+        try:
+            target = projects.resolve_output(project, name)
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
         if not target.is_file():
             return self._error(HTTPStatus.NOT_FOUND, f"no rendered file {name}")
         self.send_response(HTTPStatus.OK)
@@ -395,23 +588,21 @@ class Handler(BaseHTTPRequestHandler):
             while block := handle.read(CHUNK):
                 self.wfile.write(block)
 
-    def _reveal_output(self) -> None:
+    def _reveal_output(self, project: Project) -> None:
         """Shows the file in Finder, which beats downloading a copy of it.
 
         A finished render runs to hundreds of megabytes; pulling it through the browser
         would write a second copy onto the same disk for no reason.
         """
-        length = int(self.headers.get("Content-Length") or 0)
+        request = self._body()
+        if request is None:
+            return
         try:
-            request = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError as err:
-            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
-        name = (request.get("name") or "").strip()
-        if not name or "/" in name:
-            return self._error(HTTPStatus.BAD_REQUEST, "bad output name")
-        target = self.session_path.parent / name
+            target = projects.resolve_output(project, (request.get("name") or "").strip())
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
         if not target.exists():
-            return self._error(HTTPStatus.NOT_FOUND, f"no rendered file {name}")
+            return self._error(HTTPStatus.NOT_FOUND, f"no rendered file {target.name}")
         if sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(target)])
         elif sys.platform.startswith("linux"):
@@ -419,9 +610,9 @@ class Handler(BaseHTTPRequestHandler):
         else:
             return self._error(HTTPStatus.NOT_IMPLEMENTED,
                                "revealing a file is only wired up for macOS and Linux")
-        self._send(HTTPStatus.OK, b'{"revealed":true}', "application/json")
+        self._json({"revealed": True})
 
-    def _receive_overlay(self) -> None:
+    def _receive_overlay(self, project: Project) -> None:
         """Takes the telemetry layer the browser just encoded."""
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
@@ -429,9 +620,10 @@ class Handler(BaseHTTPRequestHandler):
         # The container depends on which codec the browser could encode: H.264 goes in
         # MP4, VP9 and VP8 in WebM. ffmpeg reads either, so the extension just follows.
         suffix = ".mp4" if "mp4" in (self.headers.get("Content-Type") or "") else ".webm"
-        for stale in self.session_path.parent.glob("overlay.*"):
+        project.out_dir.mkdir(parents=True, exist_ok=True)
+        for stale in project.out_dir.glob("overlay.*"):
             stale.unlink(missing_ok=True)
-        target = self.session_path.parent / f"overlay{suffix}"
+        target = project.out_dir / f"overlay{suffix}"
         remaining = length
         with target.open("wb") as handle:
             while remaining > 0:
@@ -440,37 +632,35 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 handle.write(block)
                 remaining -= len(block)
-        self._send(HTTPStatus.OK,
-                   json.dumps({"saved": str(target), "bytes": length}).encode(),
-                   "application/json; charset=utf-8")
+        self._json({"saved": str(target), "bytes": length})
 
-    def _start_render(self) -> None:
+    def _start_render(self, project: Project) -> None:
         """Launches ffmpeg in the background and hands back a job to poll."""
         from . import render as render_module
 
-        length = int(self.headers.get("Content-Length") or 0)
-        try:
-            request = json.loads(self.rfile.read(length) or b"{}")
-        except json.JSONDecodeError as err:
-            return self._error(HTTPStatus.BAD_REQUEST, f"bad request: {err}")
-
-        session = json.loads(self.session_path.read_text(encoding="utf-8"))
-        if not self.layout_path.exists():
+        request = self._body()
+        if request is None:
+            return
+        if not project.has_session():
+            return self._error(HTTPStatus.BAD_REQUEST, "this project is not built yet")
+        if not project.layout_path.exists():
             return self._error(HTTPStatus.BAD_REQUEST, "no layout has been saved yet")
-        layout = json.loads(self.layout_path.read_text(encoding="utf-8"))
 
-        out_dir = self.session_path.parent
-        # The container follows whichever codec the browser managed to encode, so the
-        # extension is not known here - take whatever the upload left behind.
-        overlay = next(iter(sorted(out_dir.glob("overlay.*"))), None)
-        output = out_dir / (request.get("name") or "final.mp4")
+        session = json.loads(project.session_path.read_text(encoding="utf-8"))
+        layout = json.loads(project.layout_path.read_text(encoding="utf-8"))
+        overlay = project.overlay()
+        try:
+            output = projects.resolve_output(project, request.get("name") or "final.mp4")
+        except ProjectError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
+        work_dir = project.work_dir
 
         job = Job(uuid.uuid4().hex[:12])
         JOBS[job.id] = job
 
         def work() -> None:
             try:
-                prepared = render_module.prepare_clips(session, out_dir / "work")
+                prepared = render_module.prepare_clips(session, work_dir)
                 plan = render_module.build_plan(
                     prepared, layout, overlay, output,
                     duration_s=request.get("duration"))
@@ -489,23 +679,54 @@ class Handler(BaseHTTPRequestHandler):
                 job.message = str(err)[:500]
 
         threading.Thread(target=work, daemon=True).start()
-        self._send(HTTPStatus.OK, json.dumps(job.as_dict()).encode(),
-                   "application/json; charset=utf-8")
+        self._json(job.as_dict())
 
 
-def make_server(session_path: Path, *, layout_path: Path | None = None,
+def _apply_offset(payload: dict, clip_id: str, manual_s: float) -> None:
+    """Sets a clip's total offset, keeping the machine's answer beside it.
+
+    Storing the automatic value makes the operation idempotent and reversible: the slider
+    can be dragged a dozen times and the correction is still measured from one baseline.
+    """
+    for clip in payload.get("clips") or []:
+        if clip.get("id") != clip_id:
+            continue
+        auto = clip.get("auto_offset_s", clip.get("offset_s", 0.0))
+        clip["auto_offset_s"] = auto
+        clip["offset_s"] = round(auto + manual_s, 3)
+        clip.setdefault("sync", {})["manual_s"] = round(manual_s, 3)
+        return
+    raise ValueError(f"no clip {clip_id} in this session")
+
+
+def make_server(data_root: Path, *, project: str | None = None,
+                session_path: Path | None = None,
                 port: int = 8712) -> ThreadingHTTPServer:
-    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    """A server over a data directory.
+
+    `project` or `session_path` binds it to one project, so the un-prefixed routes still
+    work — that is what keeps `trackoverlay serve out/session.json` and old bookmarks
+    alive. The binding is fixed at construction: nothing switches it later, which is the
+    whole reason two tabs cannot tread on each other.
+    """
+    bound: Project | None = None
+    if session_path is not None:
+        bound = projects.from_session_path(session_path)
+    elif project is not None:
+        bound = projects.read(data_root, project)
+
     handler = type("BoundHandler", (Handler,), {
-        "session_path": session_path,
-        "layout_path": layout_path or session_path.with_name("layout.json"),
-        "media": Media.from_session(payload),
+        "data_root": data_root,
+        "bound": bound,
     })
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 
 
-def serve(session_path: Path, *, port: int = 8712, open_browser: bool = True) -> None:
-    httpd = make_server(session_path, port=port)
+def serve(data_root: Path, *, project: str | None = None,
+          session_path: Path | None = None, port: int = 8712,
+          open_browser: bool = True) -> None:
+    data_root.mkdir(parents=True, exist_ok=True)
+    httpd = make_server(data_root, project=project, session_path=session_path, port=port)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     print(f"editor: {url}   (Ctrl+C to stop)")
     if open_browser:

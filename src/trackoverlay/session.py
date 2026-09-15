@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,22 +104,33 @@ def _build_telemetry(data: racebox.RaceBoxData) -> T.Telemetry:
     return tel
 
 
-def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
-                 start_utc: float) -> list[dict]:
+def _align_clips(found: list[clips.Clip], tel: T.Telemetry, start_utc: float,
+                 manual_s: dict[str, float] | None = None,
+                 on_clip: Callable[[int, str], None] | None = None) -> list[dict]:
     speeds = tel["speed"]
+    corrections = manual_s or {}
     out = []
-    for clip in found:
+    for position, clip in enumerate(found):
+        clip_id = f"cam_{clip.id}"
+        if on_clip is not None:
+            on_clip(position, clip_id)
         samples: list[gpmf.GpsSample] = []
-        for path in clip.files:
+        for chunk in clip.chunks:
             try:
-                samples += gpmf.read_gps(path)
+                # The stream was already pulled out when the chunk was read; parsing the
+                # bytes again is free, extracting them a second time is a full pass over
+                # a four gigabyte file.
+                samples += (gpmf.parse_gps(chunk.gpmd) if chunk.gpmd is not None
+                            else gpmf.read_gps(chunk.path))
             except (gpmf.GpmfError, OSError):
                 pass                      # video without telemetry has to show up too
+        manual = corrections.get(clip_id, 0.0)
         result = sync.align([s.t_utc for s in samples], [s.speed_kmh for s in samples],
-                            tel.times, speeds, session_start_utc=start_utc)
+                            tel.times, speeds, session_start_utc=start_utc,
+                            manual_s=manual)
         proxies = clip.proxies()
         out.append({
-            "id": f"cam_{clip.id}",
+            "id": clip_id,
             "files": [str(p) for p in clip.files],
             # Duration of each chunk: the browser plays them through one <video> tag and
             # needs to know where one file ends and the next begins.
@@ -129,20 +141,34 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry,
             "height": clip.size[1],
             "proxy": [str(p) for p in proxies] if proxies else None,
             "offset_s": round(result.offset_s, 3),
+            # What the machine worked out, kept apart from what a person confirmed, so
+            # the slider always measures from the same baseline.
+            "auto_offset_s": round(result.offset_s - manual, 3),
             "duration_s": round(clip.duration_s, 3),
             "sync": {
                 "method": result.method,
                 "correlation": round(result.correlation, 4),
                 "correction_s": round(result.correction_s, 3),
                 "reliable": result.reliable,
+                "manual_s": round(manual, 3),
             },
         })
     return out
 
 
 def build_session(racebox_files: list[Path], video_files: list[Path],
-                  *, track: str = "") -> Session:
-    """The full pipeline: parsers, synchronisation, laps, envelope."""
+                  *, track: str = "", manual_s: dict[str, float] | None = None,
+                  on_progress: Callable[[float, str], None] | None = None) -> Session:
+    """The full pipeline: parsers, synchronisation, laps, envelope.
+
+    `on_progress` is weighted by where the minutes actually go: reading the video chunks
+    dominates everything else put together, so it owns three quarters of the bar.
+    """
+    def report(done: float, stage: str) -> None:
+        if on_progress is not None:
+            on_progress(done, stage)
+
+    report(0.0, "reading telemetry")
     if not racebox_files:
         raise SessionError("no RaceBox export was given")
 
@@ -151,7 +177,11 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
     if not csvs:
         raise SessionError("at least one RaceBox CSV is required — a VBO alone will not do")
 
-    parts = [racebox.read_csv(p) for p in csvs] + [racebox.read_vbo(p) for p in vbos]
+    parts = []
+    for n, path in enumerate(csvs + vbos):
+        report(0.10 * n / len(csvs + vbos), f"reading {path.name}")
+        parts.append(racebox.read_csv(path) if path.suffix.lower() == ".csv"
+                     else racebox.read_vbo(path))
     data = racebox.merge(*parts)
     tel = T.resample_uniform(_build_telemetry(data), round(data.rate_hz))
     start_utc = tel.times[0]
@@ -165,9 +195,22 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
         raise SessionError(
             "could not mark out a single lap — the track is shorter than a lap, or no gate was found")
     envelope = L.build_envelope(lats, lons, found_laps)
+    report(0.10, "reading video")
 
-    found_clips = clips.discover(video_files) if video_files else []
-    aligned = _align_clips(found_clips, tel, start_utc)
+    def chunk_read(_position: int, path: Path) -> None:
+        nonlocal read
+        report(0.10 + 0.75 * read / max(1, len(video_files)),
+               f"reading GPS from {path.name} ({read + 1}/{len(video_files)})")
+        read += 1
+
+    read = 0
+    found_clips = clips.discover(video_files, on_chunk=chunk_read) if video_files else []
+
+    def aligning(position: int, clip_id: str) -> None:
+        report(0.85 + 0.10 * position / max(1, len(found_clips)), f"syncing {clip_id}")
+
+    aligned = _align_clips(found_clips, tel, start_utc, manual_s, aligning)
+    report(0.95, "writing the session")
     if found_clips and not any(c["sync"]["reliable"] for c in aligned):
         # Not an error: footage without GPS still cuts together, just by hand.
         pass

@@ -67,11 +67,12 @@ jobs:
       # here on real data from a real track day.
       - name: Build a session from the committed telemetry
         run: |
-          uv run trackoverlay build data/*.csv data/*.vbo \
-            --track "Slovakia Ring" -o out/session.json
+          PROJECT=data/slovakia-ring-2026-09-12
+          uv run trackoverlay build "$PROJECT"/*.csv "$PROJECT"/*.vbo \
+            --track "Slovakia Ring" -o "$PROJECT/session.json"
           python3 - <<'PY'
           import json
-          session = json.load(open("out/session.json"))
+          session = json.load(open("data/slovakia-ring-2026-09-12/session.json"))
           laps = session["laps"]
           best = min(lap["duration_s"] for lap in laps)
           assert len(laps) == 8, f"expected 8 laps, got {len(laps)}"

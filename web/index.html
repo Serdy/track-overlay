@@ -13,24 +13,33 @@
     <span class="muted" id="session-info"></span>
     <span class="spacer"></span>
     <span class="muted" id="sync-info"></span>
-    <button id="open-picker" class="bar-btn" title="Choose the files for a session">📂 Files</button>
+    <button id="open-picker" class="bar-btn" title="The files this project is built from">📂 Files</button>
+    <button id="home" class="bar-btn" title="Back to the project list">☰ Projects</button>
   </header>
 
   <div id="picker" class="picker" hidden>
     <div class="picker-box">
       <div class="picker-head">
-        <strong>Session files</strong>
+        <strong id="picker-title">Session files</strong>
         <code class="muted" id="picker-build-id"></code>
         <span class="spacer"></span>
         <button id="picker-close">✕</button>
       </div>
       <div class="picker-list" id="picker-list"></div>
       <div class="picker-foot">
-        <button id="picker-add">Choose files…</button>
-        <button id="picker-clear">Clear</button>
-        <span class="muted" id="picker-chosen">nothing chosen</span>
+        <button id="picker-add">Add files…</button>
+        <input id="picker-track" type="text" placeholder="Circuit name" autocomplete="off">
+        <span class="muted" id="picker-chosen">nothing yet</span>
         <span class="spacer"></span>
         <button id="picker-build" disabled>Build session</button>
+      </div>
+      <div id="picker-progress" hidden>
+        <div class="export-row">
+          <span class="muted" id="picker-stage"></span>
+          <span class="spacer"></span>
+          <code id="picker-percent">0%</code>
+        </div>
+        <div class="export-track"><div id="picker-fill"></div></div>
       </div>
       <div class="muted" id="picker-status"></div>
     </div>
@@ -40,9 +49,29 @@
     <div id="slots"></div>
     <canvas id="overlay"></canvas>
     <div id="empty" class="empty">No video attached — showing telemetry only</div>
+    <div id="no-session" class="empty" hidden>
+      Nothing built yet — add the RaceBox export and the GoPro files, then build.
+    </div>
   </main>
 
   <section class="readout" id="readout"></section>
+
+  <section id="sync-panel" class="sync" hidden>
+    <div class="sync-row">
+      <strong>Check the sync</strong>
+      <select id="sync-clip" title="Which camera to adjust"></select>
+      <span class="muted" id="sync-method"></span>
+      <span class="spacer"></span>
+      <button id="sync-brake" title="Jump to a hard braking point — the easiest frame to judge">Next braking ⤓</button>
+      <input id="sync-slider" type="range" min="-5" max="5" step="0.02" value="0"
+             title="Shift this camera against the telemetry, in seconds">
+      <code id="sync-value">+0.00 s</code>
+      <span class="muted" id="sync-saved"></span>
+      <button id="sync-later">Later</button>
+      <button id="sync-confirm">Looks right</button>
+    </div>
+    <canvas id="sync-graph" class="sync-graph" height="56"></canvas>
+  </section>
 
   <div id="export-panel" class="export-panel" hidden>
     <div class="export-row">
@@ -78,10 +107,7 @@
       <option value="2560x1440">1440p</option>
       <option value="3840x2160">2160p</option>
     </select>
-    <label class="nudge" title="Shift the telemetry against the video, in seconds">
-      sync <input id="nudge" type="range" min="-3" max="3" step="0.02" value="0">
-      <code id="nudge-value">0.00</code>
-    </label>
+    <button id="open-sync" title="Check the telemetry against the picture again">⇆ sync</button>
     <select id="export-range" title="How much to render">
       <option value="10">10 s</option>
       <option value="60">1 min</option>

@@ -6,6 +6,11 @@
  * module has no unit tests — there is nothing in it to test.
  */
 (function () {
+  // Every project is addressed in the URL, so the page learns which one it is from its
+  // own address rather than from the server holding a "current project".
+  const BASE = window.location.pathname.replace(/\/+$/, '');
+  const api = (path) => BASE + path;
+
   const dom = {};
   let session = null;
   let clock = null;
@@ -16,6 +21,12 @@
   let layout = null;
   let segmentStart = null;      // set while a stretch is being marked out
   let segmentAction = null;     // what the second click will do: 'swap' or 'cut'
+  let payload = null;           // the session as it came off the wire
+  let project = null;           // the project this page is editing
+  let syncClip = null;          // which camera the sync panel is adjusting
+  let syncTimer = null;
+  let brakingPoints = [];       // the frames worth checking the sync against
+  let brakingAt = -1;
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
   // the preview and the render agree across different output resolutions.
@@ -31,7 +42,6 @@
       { id: 'pip', rect: [0.70, 0.04, 0.28, 0.28] },
     ],
     output: { width: 1920, height: 1080, fps: 60 },
-    nudge_s: 0,
     ranges: null,               // null means the whole session
   };
 
@@ -52,25 +62,36 @@
                       'timeline', 'lap-marks', 'playhead', 'clock-time', 'lap-label',
                       'swap', 'segment', 'cut', 'laps-only', 'reset',
                       'cut-marks', 'gap-marks', 'pending-range',
-                      'resolution', 'nudge', 'nudge-value',
+                      'resolution',
+                      'sync-panel', 'sync-clip', 'sync-method', 'sync-slider',
+                      'sync-value', 'sync-brake', 'sync-confirm', 'sync-graph',
+                      'sync-saved', 'sync-later', 'open-sync',
                       'export', 'export-range', 'export-panel', 'export-stage',
                       'export-percent', 'export-fill', 'export-cancel', 'export-result',
                       'export-done', 'export-download', 'export-reveal', 'export-error',
                       'open-picker', 'picker', 'picker-close', 'picker-list',
-                      'picker-add', 'picker-chosen', 'picker-clear', 'picker-build',
-                      'picker-status', 'picker-build-id']) {
+                      'picker-add', 'picker-chosen', 'picker-build', 'picker-title',
+                      'picker-track', 'picker-status', 'picker-build-id', 'home',
+                      'picker-progress', 'picker-stage', 'picker-percent', 'picker-fill',
+                      'no-session']) {
       dom[id] = document.getElementById(id);
     }
   }
 
   async function boot() {
     bind();
-    const response = await fetch('/api/session');
+    wirePicker();
+    const response = await fetch(api('/api/session'));
     if (!response.ok) {
-      dom['track-name'].textContent = 'failed to load the session';
+      // A project that has not been built yet: show its files instead of an error. This
+      // is the ordinary first visit, which is why the editor no longer refuses to start.
+      dom['no-session'].hidden = false;
+      dom['track-name'].textContent = 'not built yet';
+      await openPicker();
       return;
     }
-    session = SessionModel.load(await response.json());
+    payload = await response.json();
+    session = SessionModel.load(payload);
     clock = Clock.create(session.duration, 60);
     // The acceleration score is computed once for the whole session: it is a pass over
     // forty thousand samples, not something to redo on every frame.
@@ -98,16 +119,15 @@
     if (layout.output && layout.output.width) {
       dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
     }
-    if (layout.nudge_s) {
-      dom.nudge.value = String(layout.nudge_s);
-      applyNudge(layout.nudge_s);
-    }
 
     Clock.onChange(clock, render);
     window.addEventListener('resize', resizeOverlay);
     resizeOverlay();
     render(0);
     requestAnimationFrame(tick);
+
+    // Until a person has looked at it, the sync is the machine's guess and nothing more.
+    if (!(payload.session || {}).sync_confirmed) openSync();
   }
 
   /**
@@ -121,7 +141,7 @@
     const fallback = Object.assign({}, DEFAULT_LAYOUT,
                                    { cuts: Cuts.initial([...known]) });
     try {
-      const response = await fetch('/api/layout');
+      const response = await fetch(api('/api/layout'));
       if (!response.ok) return fallback;
       const saved = await response.json();
       const cuts = (saved.cuts || []).filter(
@@ -220,7 +240,6 @@
     dom['cut-marks'].innerHTML = '';
     dom.reset.disabled = layout.cuts.length <= 1
       && JSON.stringify(layout.widgets) === JSON.stringify(DEFAULT_LAYOUT.widgets)
-      && !layout.nudge_s
       && Ranges.total(keptRanges()) >= session.duration - 0.01;
     for (const cut of layout.cuts) {
       if (cut.t <= 0) continue;                  // the opening entry is not a change
@@ -243,13 +262,12 @@
     const switches = Math.max(0, layout.cuts.length - 1);
     const moved = JSON.stringify(layout.widgets) !== JSON.stringify(DEFAULT_LAYOUT.widgets);
     const trimmed = Ranges.total(keptRanges()) < session.duration - 0.01;
-    if (!switches && !moved && !layout.nudge_s && !trimmed) return;
+    if (!switches && !moved && !trimmed) return;
 
     const parts = [];
     if (switches) parts.push(`${switches} camera switch(es)`);
     if (trimmed) parts.push('the trimming');
     if (moved) parts.push('the widget placement');
-    if (layout.nudge_s) parts.push('the sync adjustment');
     if (!window.confirm(`Discard ${parts.join(', ')}?`)) return;
 
     layout = Object.assign(JSON.parse(JSON.stringify(DEFAULT_LAYOUT)),
@@ -259,8 +277,6 @@
     dom.segment.classList.remove('armed');
     dom.cut.classList.remove('cutting');
     renderGapMarks();
-    dom.nudge.value = '0';
-    applyNudge(0);
     dom.resolution.value = `${layout.output.width}x${layout.output.height}`;
 
     invalidateMap();
@@ -363,9 +379,68 @@
 
   let exporting = null;
   let dragging = null;
-  let chosen = new Set();
 
-  // --- choosing source files -------------------------------------------------
+  // --- the project's own files ------------------------------------------------
+
+  /**
+   * Loads what the project holds: the files it will build from, and what it knows.
+   *
+   * Sources are whatever sits in the project folder plus paths registered from the file
+   * dialog. Nothing is copied — a track day is twenty gigabytes of footage, and the
+   * server reads the same disk the camera card is on.
+   */
+  async function loadProject() {
+    const response = await fetch(api('/api/project'));
+    if (!response.ok) throw new Error(`the server answered ${response.status}`);
+    project = await response.json();
+    renderSources();
+  }
+
+  function renderSources() {
+    const files = project.files || [];
+    dom['picker-list'].innerHTML = '';
+    if (!files.length) {
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = 'Nothing here yet — use “Add files…”.';
+      dom['picker-list'].appendChild(empty);
+    }
+    for (const path of files) {
+      const name = path.split('/').pop();
+      const row = document.createElement('div');
+      row.innerHTML = `<span>${Picker.isVideo(name) ? '🎬' : '📈'}</span>`
+        + `<span>${name}</span><span class="size">✕</span>`;
+      row.title = path;
+      row.querySelector('.size').addEventListener('click', () => removeSource(path));
+      dom['picker-list'].appendChild(row);
+    }
+    dom['picker-title'].textContent = project.title || project.name;
+    dom['picker-track'].value = project.track || '';
+    dom['picker-chosen'].textContent = Picker.describe(files);
+    const blocked = Picker.missing(files);
+    dom['picker-build'].disabled = Boolean(blocked);
+    dom['picker-build'].textContent = project.built ? 'Rebuild session' : 'Build session';
+    dom['picker-build'].title = blocked || 'Assemble the session from these files';
+  }
+
+  async function editSources(body) {
+    dom['picker-status'].textContent = '';
+    try {
+      const response = await fetch(api('/api/sources'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `the server answered ${response.status}`);
+      project = result;
+      renderSources();
+    } catch (error) {
+      dom['picker-status'].textContent = String(error.message || error);
+    }
+  }
+
+  const removeSource = (path) => editSources({ remove: [path] });
 
   /**
    * Asks the server to open the system file dialog.
@@ -381,12 +456,10 @@
       const response = await fetch('/api/choose', { method: 'POST' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `the server answered ${response.status}`);
-
-      for (const path of result.files || []) chosen.add(path);
       dom['picker-status'].textContent = (result.ignored || []).length
         ? `ignored, not a format this reads: ${result.ignored.join(', ')}`
         : '';
-      renderChosen();
+      if ((result.files || []).length) await editSources({ files: result.files });
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
     } finally {
@@ -394,50 +467,186 @@
     }
   }
 
-  function renderChosen() {
-    const paths = [...chosen].sort();
-    dom['picker-list'].innerHTML = '';
-    if (!paths.length) {
-      const empty = document.createElement('div');
-      empty.className = 'muted';
-      empty.textContent = 'No files yet — use “Choose files…”.';
-      dom['picker-list'].appendChild(empty);
-    }
-    for (const path of paths) {
-      const row = document.createElement('div');
-      const name = path.split('/').pop();
-      row.innerHTML = `<span>${Picker.isVideo(name) ? '🎬' : '📈'}</span>`
-        + `<span>${name}</span><span class="size">✕</span>`;
-      row.title = path;
-      row.addEventListener('click', () => { chosen.delete(path); renderChosen(); });
-      dom['picker-list'].appendChild(row);
-    }
-    dom['picker-chosen'].textContent = Picker.describe(paths);
-    const blocked = Picker.missing(paths);
-    dom['picker-build'].disabled = Boolean(blocked);
-    dom['picker-build'].title = blocked || 'Assemble the session from these files';
-  }
-
   async function buildSession() {
     dom['picker-build'].disabled = true;
-    dom['picker-status'].textContent = 'reading the files…';
+    dom['picker-progress'].hidden = false;
+    showBuild(0, 'starting');
     try {
-      const started = await (await fetch('/api/build', {
+      const started = await (await fetch(api('/api/build'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: [...chosen] }),
+        body: JSON.stringify({ track: dom['picker-track'].value.trim() }),
       })).json();
       if (started.error) throw new Error(started.error);
 
-      await ExportUI.follow(started.id, (done) => {
-        dom['picker-status'].textContent = `building… ${Math.round(done * 100)}%`;
+      const finished = await ExportUI.follow(started.id, (done, job) => {
+        showBuild(done, (job && job.stage) || 'working');
       });
-      dom['picker-status'].textContent = 'done, reloading';
+      showBuild(1, 'done');
       window.location.reload();
+      return finished;
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
-      renderChosen();
+      dom['picker-progress'].hidden = true;
+      renderSources();
     }
+  }
+
+  function showBuild(done, stage) {
+    dom['picker-percent'].textContent = `${Math.round(done * 100)}%`;
+    dom['picker-fill'].style.width = `${done * 100}%`;
+    dom['picker-stage'].textContent = stage;
+  }
+
+  // --- checking the sync -------------------------------------------------------
+
+  /**
+   * The sync step, shown before the editor is trusted.
+   *
+   * Everything downstream rests on this one number, and the machine's answer is only as
+   * good as the overlap it had to work with. So it is put in front of a person with the
+   * picture beside it: at a hard braking point the two agree or they visibly do not.
+   */
+  function openSync() {
+    if (!session.clips.length) return;
+    dom['sync-panel'].hidden = false;
+    dom['sync-clip'].innerHTML = '';
+    for (const clip of session.clips) {
+      const option = document.createElement('option');
+      option.value = clip.id;
+      option.textContent = clip.id;
+      dom['sync-clip'].appendChild(option);
+    }
+    syncClip = session.clips[0].id;
+    brakingPoints = findBraking();
+    brakingAt = -1;
+    renderSync();
+    nextBraking();
+  }
+
+  function currentClip() {
+    return session.clips.find((clip) => clip.id === syncClip) || session.clips[0];
+  }
+
+  function renderSync() {
+    if (dom['sync-panel'].hidden) return;
+    const clip = currentClip();
+    const sync = clip.sync || {};
+    const manual = clip.offset_s - autoOffset(clip);
+    dom['sync-clip'].value = clip.id;
+    dom['sync-method'].textContent =
+      `${sync.method || 'unknown'} · correlation ${(sync.correlation || 0).toFixed(3)}`;
+    dom['sync-method'].className = sync.reliable ? 'muted' : 'warn';
+    dom['sync-slider'].value = String(manual);
+    dom['sync-value'].textContent = `${manual >= 0 ? '+' : ''}${manual.toFixed(2)} s`;
+    drawSyncGraph();
+  }
+
+  function autoOffset(clip) {
+    // What the machine worked out, so the slider always measures from one baseline.
+    return clip.auto_offset_s !== undefined ? clip.auto_offset_s : clip._baseOffset;
+  }
+
+  /** Moves one clip by hand, in the preview at once and on disk a moment later. */
+  function setManual(seconds) {
+    const clip = currentClip();
+    clip.offset_s = autoOffset(clip) + seconds;
+    dom['sync-value'].textContent = `${seconds >= 0 ? '+' : ''}${seconds.toFixed(2)} s`;
+    syncVideos(clock.time);
+    render(clock.time);
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => saveSync(clip.id, seconds), 400);
+  }
+
+  async function saveSync(clipId, seconds, confirmed) {
+    try {
+      const response = await fetch(api('/api/sync'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clip: clipId, manual_s: seconds, confirmed }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || 'could not save');
+      dom['sync-saved'].textContent = 'saved';
+    } catch (error) {
+      dom['sync-saved'].textContent = String(error.message || error);
+    }
+  }
+
+  async function confirmSync() {
+    const clip = currentClip();
+    clearTimeout(syncTimer);
+    await saveSync(clip.id, clip.offset_s - autoOffset(clip), true);
+    dom['sync-panel'].hidden = true;
+    describe();
+  }
+
+  /** Where the rider braked hardest, worked out once — those are the frames to check. */
+  function findBraking() {
+    const accel = session.channels.accel;
+    if (!accel) return [];
+    const samples = accel.samples;
+    const found = [];
+    let best = null;
+    for (let i = 0; i < samples.length; i += 1) {
+      if (samples[i] < -0.35) {
+        if (best === null || samples[i] < samples[best]) best = i;
+      } else if (best !== null) {
+        found.push({ t: best / session.rate, g: samples[best] });
+        best = null;
+      }
+    }
+    return found.sort((a, b) => a.g - b.g).slice(0, 12).sort((a, b) => a.t - b.t);
+  }
+
+  function nextBraking() {
+    if (!brakingPoints.length) return;
+    brakingAt = (brakingAt + 1) % brakingPoints.length;
+    Clock.pause(clock);
+    Clock.seek(clock, brakingPoints[brakingAt].t);
+  }
+
+  /** Speed either side of the playhead, to compare against what the frame shows. */
+  function drawSyncGraph() {
+    const canvas = dom['sync-graph'];
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = canvas.clientWidth || 600;
+    const height = canvas.height;
+    const span = 6;                       // seconds either side
+    const now = clock.time;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Scaled to the window, not to zero: the point is to see the shape of one braking
+    // event, and against a 250 km/h axis a 60 km/h drop is a barely visible kink.
+    let low = Infinity;
+    let high = -Infinity;
+    const at = (x) => SessionModel.sampleAt(
+      session, 'speed', Math.max(0, now + (x / width - 0.5) * 2 * span)) || 0;
+    for (let x = 0; x <= width; x += 1) {
+      low = Math.min(low, at(x));
+      high = Math.max(high, at(x));
+    }
+    const range = Math.max(5, high - low);
+
+    ctx.strokeStyle = '#4da3ff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let x = 0; x <= width; x += 1) {
+      const y = height - ((at(x) - low) / range) * (height - 10) - 5;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = '#8b919c';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText(`${Math.round(high)} km/h`, 6, 13);
+    ctx.fillText(`${Math.round(low)}`, 6, height - 5);
+
+    ctx.strokeStyle = '#f5bc00';
+    ctx.beginPath();
+    ctx.moveTo(width / 2, 0);
+    ctx.lineTo(width / 2, height);
+    ctx.stroke();
   }
 
   /** Widget sizes as fractions of the frame, for hit testing and clamping. */
@@ -519,17 +728,6 @@
     saveLayout();
   }
 
-  /** Shifts the telemetry against the video without re-running the whole build. */
-  function applyNudge(seconds) {
-    dom['nudge-value'].textContent = seconds.toFixed(2);
-    layout.nudge_s = seconds;
-    for (const clip of session.clips) {
-      clip.offset_s = clip._baseOffset + seconds;
-    }
-    render(clock.time);
-    saveLayout();
-  }
-
   /**
    * Draws one overlay frame at the output resolution.
    *
@@ -574,6 +772,7 @@
     try {
       const ranges = keptRanges();
       const where = await ExportUI.run({
+        base: BASE,
         output,
         toSession: (outputTime) => Ranges.toSession(ranges, outputTime),
         kept: Ranges.total(ranges),
@@ -586,7 +785,7 @@
       });
       const name = String(where).split('/').pop();
       dom['export-result'].textContent = `written: ${where}`;
-      dom['export-download'].href = `/api/output/${encodeURIComponent(name)}`;
+      dom['export-download'].href = api(`/api/output/${encodeURIComponent(name)}`);
       dom['export-download'].setAttribute('download', name);
       dom['export-reveal'].dataset.name = name;
       dom['export-done'].hidden = false;
@@ -603,7 +802,7 @@
   let saveTimer = null;
 
   function writeLayout() {
-    return fetch('/api/layout', {
+    return fetch(api('/api/layout'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(layout),
@@ -622,11 +821,41 @@
    * for the timer is not safe: browsers throttle timers in a background tab, and an
    * export started from one would otherwise render a stale layout.
    */
+  /**
+   * Writes the layout now, whether or not anything was edited.
+   *
+   * The render reads it from disk, so on a project nobody has touched - the default
+   * layout, straight after a build - there would otherwise be no file to read.
+   */
   async function flushLayout() {
-    if (saveTimer === null) return;
     clearTimeout(saveTimer);
     saveTimer = null;
     await writeLayout();
+  }
+
+  function wirePicker() {
+    dom['open-picker'].addEventListener('click', openPicker);
+    dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
+    dom['picker-add'].addEventListener('click', addFiles);
+    dom['picker-build'].addEventListener('click', buildSession);
+    dom.home.addEventListener('click', () => { window.location.href = '/'; });
+    dom.picker.addEventListener('click', (event) => {
+      if (event.target === dom.picker) dom.picker.hidden = true;
+    });
+  }
+
+  async function openPicker() {
+    dom.picker.hidden = false;
+    // The stamp the page was served with, so a stale copy announces itself.
+    const script = [...document.scripts].find((tag) => tag.src.includes('state.js'));
+    dom['picker-build-id'].textContent = script && script.src.includes('?v=')
+      ? `build ${script.src.split('?v=')[1]}` : 'build unstamped';
+    dom['picker-status'].textContent = '';
+    try {
+      await loadProject();
+    } catch (error) {
+      dom['picker-status'].textContent = String(error.message || error);
+    }
   }
 
   function wire() {
@@ -641,22 +870,16 @@
     dom.reset.addEventListener('click', resetLayout);
     dom.export.addEventListener('click', startExport);
 
-    dom['open-picker'].addEventListener('click', () => {
-      dom.picker.hidden = false;
-      // The stamp the page was served with, so a stale copy announces itself.
-      const script = [...document.scripts].find((s) => s.src.includes('state.js'));
-      dom['picker-build-id'].textContent = script && script.src.includes('?v=')
-        ? `build ${script.src.split('?v=')[1]}` : 'build unstamped';
-      dom['picker-status'].textContent = '';
-      renderChosen();
+    dom['open-sync'].addEventListener('click', openSync);
+    dom['sync-clip'].addEventListener('change', () => {
+      syncClip = dom['sync-clip'].value;
+      renderSync();
     });
-    dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
-    dom['picker-add'].addEventListener('click', addFiles);
-    dom['picker-clear'].addEventListener('click', () => { chosen.clear(); renderChosen(); });
-    dom['picker-build'].addEventListener('click', buildSession);
-    dom.picker.addEventListener('click', (event) => {
-      if (event.target === dom.picker) dom.picker.hidden = true;
-    });
+    dom['sync-slider'].addEventListener('input',
+                                        () => setManual(Number(dom['sync-slider'].value)));
+    dom['sync-brake'].addEventListener('click', nextBraking);
+    dom['sync-confirm'].addEventListener('click', confirmSync);
+    dom['sync-later'].addEventListener('click', () => { dom['sync-panel'].hidden = true; });
 
     dom.overlay.classList.add('editing');
     dom.overlay.addEventListener('pointerdown', beginDrag);
@@ -671,7 +894,6 @@
       saveLayout();
     });
 
-    dom.nudge.addEventListener('input', () => applyNudge(Number(dom.nudge.value)));
     dom['export-cancel'].addEventListener('click', () => {
       if (exporting) exporting.abort();
     });
@@ -679,7 +901,7 @@
     dom['export-reveal'].addEventListener('click', async () => {
       const name = dom['export-reveal'].dataset.name;
       if (!name) return;
-      await fetch('/api/reveal', {
+      await fetch(api('/api/reveal'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -787,6 +1009,7 @@
   }
 
   function render(time) {
+    if (!dom['sync-panel'].hidden) drawSyncGraph();
     dom['clock-time'].textContent = Clock.formatTime(time);
     dom.play.textContent = clock.playing ? '❚❚' : '▶';
     dom.rate.textContent = `${clock.rate}×`;
@@ -839,7 +1062,7 @@
       // Crossing into another chunk: swap the source and land at the right spot.
       if (position.index !== slot.chunk) {
         slot.chunk = position.index;
-        element.src = `/media/${clip.id}/${position.index}` +
+        element.src = api(`/media/${clip.id}/${position.index}`) +
                       (clip.proxy ? '?proxy=1' : '');
         element.currentTime = position.time;
       }

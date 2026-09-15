@@ -75,19 +75,34 @@ quick.
 
 ```bash
 uv sync
+uv run trackoverlay
 ```
 
-### 1. Point it at the files
+That opens the browser on the project list. Everything else happens there — there is no
+step that has to be done from a terminal first.
 
-Either use the **Files** button in the editor, which opens the macOS file dialog and
-notes down the paths without copying anything — the server is already looking at the
-same filesystem, so pushing twenty-four gigabytes of footage through the browser to
-reach it would be pure waste. Select every chunk of a GoPro recording; they are one
-clip split at four gigabytes and are joined back together automatically.
+### 1. Make a project
 
-Or copy the files into `data/` and use the command line, as below. Chunks of one
-recording (`GH013429.MP4`, `GH023429.MP4`, …) all belong together — they are joined
-automatically either way.
+A project is a folder under `data/`, one per track day:
+
+```
+data/slovakia-ring-2026-09-12/
+  project.json          the title, the circuit, files kept elsewhere, the confirmed sync
+  RaceBox ….csv         small sources can simply live here
+  session.json          what the build produced
+  layout.json           the arrangement
+  out/                  everything rendered: overlay.mp4, final.mp4, work/
+```
+
+Press **New project**, name it, then **Add files…**. That opens the macOS file dialog and
+notes down the paths — nothing is copied, because the server reads the same disk the
+camera card is on and pushing twenty-four gigabytes through a browser to reach it would
+be pure waste. Files dropped into the folder by hand are picked up as well, so a project
+can also be assembled in Finder.
+
+Select every chunk of a GoPro recording (`GH013429.MP4`, `GH023429.MP4`, …): they are one
+clip split at four gigabytes and are joined back together automatically. More files can be
+added to a project later — a second camera, another chunk — and rebuilt.
 
 RaceBox exports twice, because its **Bike Mode** setting replaces lateral acceleration
 with lean angle rather than adding it. Export the session both ways and keep both files;
@@ -98,31 +113,52 @@ If the GoPro clock has drifted and the file dates are nonsense, fix them from sa
 time:
 
 ```bash
-uv run python tools/gopro_dates.py --apply data/*.MP4
+uv run python tools/gopro_dates.py --apply data/*/GH*.MP4
 ```
 
-### 2. Build the session
+### 2. Build, then check the sync
+
+**Build session** reads the telemetry, pulls the GPS track out of each video chunk, aligns
+the two and marks out the laps. Reading the chunks is where the time goes, so the bar
+names the file it is on.
+
+The editor then opens on the sync check, because everything downstream rests on that one
+number and the machine's answer is only as good as the overlap it had to work with. It
+shows the method and correlation, jumps to the hardest braking point, and draws the speed
+trace under the picture: at a braking marker the two agree or they visibly do not. The
+slider shifts one camera; **Looks right** confirms it.
+
+A confirmed correction is kept in `project.json` and folded into `session.json`, which is
+what the renderer reads — so unlike the old preview-only slider, it reaches the finished
+video. It also survives a rebuild.
+
+### From a script instead
+
+The command line still does the same work, which is what CI runs:
 
 ```bash
-uv run trackoverlay build data/*.csv data/*.vbo data/GH*.MP4 \
-    --track "Slovakia Ring" -o out/session.json
+uv run trackoverlay build data/slovakia-ring-2026-09-12/*.csv \
+    data/slovakia-ring-2026-09-12/*.MP4 \
+    --track "Slovakia Ring" -o data/slovakia-ring-2026-09-12/session.json
 ```
 
 ```
 session: 25.0 Hz, 40420 samples, 8 laps, best 2:40.349
   ✓ cam_3429: starts -116.14 s, 28.9 min, sync xcorr (corr 0.9997)
   ✓ cam_3446: starts -115.26 s, 11.8 min, sync xcorr (corr 0.9976)
-written: out/session.json
+written: data/slovakia-ring-2026-09-12/session.json
 ```
 
 The tick means the video was aligned by correlating its own GPS speed against the
-logger's. A `!` means it fell back to UTC alone or to manual adjustment — which happens
-when the camera never caught satellites, and is still workable with the sync slider.
+logger's. A `!` means it fell back to UTC alone — which happens when the camera never
+caught satellites, and is still workable from the sync panel.
 
 ### 3. Arrange and export
 
+Open a project from the list, or go straight to it:
+
 ```bash
-uv run trackoverlay serve out/session.json
+uv run trackoverlay serve --project slovakia-ring-2026-09-12
 ```
 
 | Action | How |
@@ -137,9 +173,10 @@ uv run trackoverlay serve out/session.json
 | Cut a stretch out | `✂ …` or X, twice |
 | Trim to the timed laps | `laps` |
 | Undo all of it | `↺` |
-| Shift telemetry against video | the `sync` slider |
+| Check the sync again | `⇆ sync` |
+| Back to the project list | `☰ Projects` |
 
-Everything is saved to `out/layout.json` as you go, and reloaded next time.
+Everything is saved to the project's `layout.json` as you go, and reloaded next time.
 
 When it finishes, **Download** saves the file through the browser and **Show in Finder**
 reveals it where it already is — which is usually what you want, since a finished render
@@ -151,18 +188,19 @@ render loop is driven by encoder events rather than timers, which browsers clamp
 one call a second once a tab stops being visible. The same thing from a terminal:
 
 ```bash
-uv run trackoverlay render out/session.json out/layout.json \
-    --overlay out/overlay.webm -o out/final.mp4
+P=data/slovakia-ring-2026-09-12
+uv run trackoverlay render "$P/session.json" "$P/layout.json" \
+    --overlay "$P/out/overlay.mp4" -o "$P/out/final.mp4"
 ```
 
 ## Tools
 
 ```bash
 # Recover the real recording time from GPS and repair the file dates.
-uv run python tools/gopro_dates.py --apply data/*.MP4
+uv run python tools/gopro_dates.py --apply data/*/GH*.MP4
 
 # Show how video and telemetry line up, and whether the offset drifts.
-uv run python tools/sync_check.py data/*.csv data/GH*.MP4
+uv run python tools/sync_check.py data/*/*.csv data/*/GH*.MP4
 ```
 
 ```
