@@ -14,7 +14,8 @@ COPY web ./web
 RUN pip install --no-cache-dir -e .
 
 # VideoToolbox is macOS-only and fails rather than falling back.
-ENV TRACKOVERLAY_CODEC=libx264
+ENV TRACKOVERLAY_CODEC=libx264 \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 8712
 VOLUME ["/data"]

@@ -149,6 +149,24 @@ class MediaCache:
 MEDIA = MediaCache()
 
 
+class Server(ThreadingHTTPServer):
+    """The HTTP server, quiet about the one error that happens constantly.
+
+    A `<video>` abandons range requests all the time - every scrub, every chunk change,
+    every time a clip leaves a slot - and each one surfaces here as a broken pipe. The
+    default handler prints a full traceback for it, which buries anything real under a
+    wall of noise, and in a container that wall is the whole log.
+    """
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:
+        if issubclass(sys.exc_info()[0] or Exception,
+                      (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
     """``Range: bytes=…`` to ``(first byte, last byte)``, inclusive.
 
@@ -780,7 +798,7 @@ def make_server(data_root: Path, *, project: str | None = None,
         "data_root": data_root,
         "bound": bound,
     })
-    return ThreadingHTTPServer((host, port), handler)
+    return Server((host, port), handler)
 
 
 def serve(data_root: Path, *, project: str | None = None,
@@ -793,7 +811,8 @@ def serve(data_root: Path, *, project: str | None = None,
     # tool bound to every interface would hand them to the network it happens to be on.
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     url = f"http://{shown}:{httpd.server_address[1]}/"
-    print(f"editor: {url}   (Ctrl+C to stop)")
+    # Flushed: stdout is a pipe under docker, and a banner nobody sees is no banner.
+    print(f"editor: {url}   (Ctrl+C to stop)", flush=True)
     if open_browser:
         webbrowser.open(url)
     try:

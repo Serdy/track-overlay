@@ -408,3 +408,22 @@ def test_a_failed_upload_leaves_nothing_that_looks_like_footage(live):
     with pytest.raises(urllib.error.HTTPError):
         upload(live.url("/api/upload"), "a.csv", b"")
     assert not list(live.folder.glob(".*.part"))
+
+
+def test_a_browser_abandoning_a_video_is_not_an_error(capsys):
+    """Every scrub abandons a range request. Reporting each one buries anything real."""
+    quiet = server.Server.__new__(server.Server)
+    try:
+        raise BrokenPipeError(32, "Broken pipe")
+    except BrokenPipeError:
+        quiet.handle_error(None, ("127.0.0.1", 0))
+    assert capsys.readouterr().err == ""
+
+
+def test_a_real_failure_is_still_reported(capsys):
+    quiet = server.Server.__new__(server.Server)
+    try:
+        raise ValueError("something actually went wrong")
+    except ValueError:
+        quiet.handle_error(None, ("127.0.0.1", 0))
+    assert "something actually went wrong" in capsys.readouterr().err
