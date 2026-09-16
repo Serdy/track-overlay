@@ -457,6 +457,12 @@
       row.querySelector('.size').addEventListener('click', () => removeSource(path));
       dom['picker-list'].appendChild(row);
     }
+    for (const gone of project.missing || []) {
+      const row = document.createElement('div');
+      row.className = 'warn';
+      row.textContent = `${gone} — file gone; build the session again without it`;
+      dom['picker-list'].appendChild(row);
+    }
     dom['picker-title'].textContent = project.title || project.name;
     dom['picker-track'].value = project.track || '';
     dom['picker-chosen'].textContent = Picker.describe(files);
@@ -999,6 +1005,19 @@
 
   async function startExport() {
     if (exporting) return;
+
+    // Asked before anything is encoded: the layer takes minutes, and a render that cannot
+    // start should not be discovered at the end of them.
+    const gone = await fetch(api('/api/project'))
+      .then((r) => r.json()).then((p) => p.missing || []).catch(() => []);
+    if (gone.length) {
+      dom['export-panel'].hidden = false;
+      dom['export-stage'].textContent = 'cannot render';
+      dom['export-error'].textContent =
+        `${gone.join('; ')} — build the session again without it`;
+      return;
+    }
+
     const choice = dom['export-range'].value;
     const limit = Number(choice) || 0;
     const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, layout.output,

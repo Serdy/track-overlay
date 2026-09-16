@@ -185,3 +185,34 @@ test('yielding to the loop does not go through a timer', async () => {
   global.setTimeout = original;
   assert.strictEqual(used, false, 'yielding must not call setTimeout');
 });
+
+test('polling wakes as soon as the page is looked at again', async () => {
+  // A hidden tab clamps timers to about a call a minute, so a finished render looked
+  // stuck until the tab was touched.
+  const listeners = [];
+  global.document = {
+    hidden: true,
+    addEventListener: (name, fn) => listeners.push(fn),
+    removeEventListener: () => {},
+  };
+  const slept = [];
+  const realTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms) => { slept.push(ms); return realTimeout(fn, 10_000); };
+
+  let polls = 0;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => (polls++ ? { state: 'done', progress: 1 } : { state: 'running', progress: 0.5 }),
+  });
+
+  const following = ExportUI.follow('abc', () => {});
+  await new Promise((resolve) => realTimeout(resolve, 20));
+  global.document.hidden = false;
+  listeners.forEach((fn) => fn());                 // the tab comes back
+
+  const job = await following;
+  assert.strictEqual(job.state, 'done');
+  assert.deepStrictEqual(slept, [ExportUI.POLL_MS]);
+  global.setTimeout = realTimeout;
+  delete global.document;
+});

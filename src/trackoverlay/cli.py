@@ -65,6 +65,7 @@ def _render(args: argparse.Namespace) -> int:
         # The editor writes whichever container the browser managed to encode.
         overlay = next((p for p in sorted(args.session.parent.glob("overlay.*"))), None)
 
+    render_module.check_footage(session, args.session.parent)
     prepared = render_module.prepare_clips(session, args.output.parent / "work",
                                            args.session.parent)
     plan = render_module.build_plan(prepared, layout, overlay, args.output,

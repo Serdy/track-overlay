@@ -25,6 +25,29 @@ const ExportUI = (function () {
     return response.json();
   }
 
+  /**
+   * Waits, but wakes the moment the page is looked at again.
+   *
+   * ffmpeg carries on regardless - it is a process on the far side of a socket - but a
+   * hidden tab has its timers clamped to about one call a minute, so coming back to the
+   * page showed a bar frozen where it was left. Worse, a run that had finished meanwhile
+   * looked stuck rather than done.
+   */
+  function pause(ms) {
+    const page = typeof document !== 'undefined' ? document : null;
+    if (!page) return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        page.removeEventListener('visibilitychange', woken);
+        resolve();
+      };
+      const woken = () => { if (!page.hidden) done(); };
+      const timer = setTimeout(done, ms);
+      page.addEventListener('visibilitychange', woken);
+    });
+  }
+
   /** Follows a render job until it stops, reporting its progress. */
   async function follow(id, onProgress, signal) {
     for (;;) {
@@ -36,7 +59,7 @@ const ExportUI = (function () {
       onProgress(job.progress, job);
       if (job.state === 'done') return job;
       if (job.state !== 'running') throw new Error(job.message || job.state);
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      await pause(POLL_MS);
     }
   }
 

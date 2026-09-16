@@ -390,3 +390,18 @@ def test_the_encoder_follows_the_machine(monkeypatch):
     assert render.video_codec() == "libx264"
     monkeypatch.setenv("TRACKOVERLAY_CODEC", "h264_nvenc")
     assert render.video_codec() == "h264_nvenc"
+
+
+def test_footage_that_has_been_moved_is_named_before_ffmpeg_runs(tmp_path):
+    """ffmpeg finds this too, but only after opening every input, and it reports a bare
+    path with no hint of which camera it was or what to do."""
+    session = {"clips": [{"id": "cam_3446",
+                          "files": [str(tmp_path / "gone" / "GH013446.MP4")]}]}
+    with pytest.raises(render.RenderError, match="cam_3446: the footage is gone"):
+        render.check_footage(session, tmp_path)
+
+
+def test_footage_still_in_the_project_folder_passes(tmp_path):
+    (tmp_path / "GH013446.MP4").write_bytes(b"x")
+    session = {"clips": [{"id": "cam_3446", "files": ["/moved/away/GH013446.MP4"]}]}
+    render.check_footage(session, tmp_path)

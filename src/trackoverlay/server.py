@@ -727,6 +727,11 @@ class Handler(BaseHTTPRequestHandler):
 
         session = json.loads(project.session_path.read_text(encoding="utf-8"))
         layout = json.loads(project.layout_path.read_text(encoding="utf-8"))
+        try:
+            # Answered now rather than as a failed job minutes later.
+            render_module.check_footage(session, project.root)
+        except render_module.RenderError as err:
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
         overlay = project.overlay()
         try:
             output = projects.resolve_output(project, request.get("name") or "final.mp4")

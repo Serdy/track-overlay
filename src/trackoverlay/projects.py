@@ -92,7 +92,26 @@ class Project:
         }
         if summary["built"]:
             summary.update(_session_summary(self.session_path))
+            summary["missing"] = _missing_footage(self)
         return summary
+
+
+def _missing_footage(project: "Project") -> list[str]:
+    """Files the session names that are no longer on disk.
+
+    Worth saying out loud: the editor shows a black slot and the render dies at the far
+    end of a long ffmpeg command line, neither of which points at the camera involved.
+    """
+    try:
+        payload = json.loads(project.session_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    gone = []
+    for clip in payload.get("clips") or []:
+        for name in clip.get("files") or []:
+            if not resolve_source(name, project.root).exists():
+                gone.append(f"{clip.get('id')}: {Path(name).name}")
+    return gone
 
 
 def _session_summary(path: Path) -> dict:

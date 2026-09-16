@@ -198,6 +198,7 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     if missing:
         raise RenderError(f"the layout refers to clips absent from the session: {missing}")
 
+
     # Whichever camera opens the main slot becomes the base, when that slot covers the
     # whole frame. Compositing an opaque full-frame image onto a black canvas costs as
     # much as the decode and the encode together - on a 30 second piece it was the
@@ -334,6 +335,24 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     args += ["-c:v", video_codec(), "-b:v", bitrate, "-r", str(fps),
              "-t", f"{output_duration:.3f}", "-pix_fmt", "yuv420p", str(output)]
     return Plan(args=args, duration_s=output_duration, inputs=inputs)
+
+
+def check_footage(session: dict, root: Path | None = None) -> None:
+    """Refuses a render whose footage has been moved or deleted since the build.
+
+    ffmpeg finds this too, but only after opening every input, and what it reports is a
+    bare path — no hint of which camera it belonged to, or that rebuilding is the answer.
+    Checked here rather than in `build_plan`, which is a planner and touches no disk.
+    """
+    from .projects import resolve_source
+
+    here = root or Path(".")
+    for clip in session.get("clips") or []:
+        for name in clip.get("files") or []:
+            if not resolve_source(name, here).exists():
+                raise RenderError(
+                    f"{clip.get('id')}: the footage is gone — {name}. Put the file back, "
+                    f"or build the session again without it.")
 
 
 def prepare_clips(session: dict, workdir: Path, root: Path | None = None) -> dict:
