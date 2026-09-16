@@ -27,6 +27,11 @@ const Picker = (function () {
     return VIDEO.includes(extension(name));
   }
 
+  /** Whether the tool can read this file at all — the rest is somebody else's. */
+  function readable(name) {
+    return isVideo(name) || isTelemetry(name);
+  }
+
   /**
    * What a chosen set is missing before a session can be built.
    *
@@ -51,7 +56,8 @@ const Picker = (function () {
     return parts.join(', ') || 'nothing chosen';
   }
 
-  return { TELEMETRY, VIDEO, extension, isTelemetry, isVideo, missing, describe };
+  return { TELEMETRY, VIDEO, extension, isTelemetry, isVideo, readable, missing,
+           describe };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

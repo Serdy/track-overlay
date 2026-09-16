@@ -108,8 +108,13 @@ Press **New project**, name it, then **Add files…**. That opens the macOS file
 notes down the paths — nothing is copied, because the server reads the same disk the
 camera card is on and pushing twenty-four gigabytes through a browser to reach it would
 be pure waste. Files dropped into the folder by hand are picked up as well, so a project
-can also be assembled in Finder — which is how it works under Docker, where there is no
-system dialog to open and the panel says so.
+can also be assembled in Finder.
+
+Under Docker there is no dialog to open and the container's disk is not the disk the
+footage is on, so the button becomes **Upload files…** — files can also be dropped onto
+the panel. That copies them into the project folder, which is slow for a four gigabyte
+chunk but is the only thing that can work there. Dropping them into `data/<project>/`
+from outside is quicker and needs no upload at all.
 
 Select every chunk of a GoPro recording (`GH013429.MP4`, `GH023429.MP4`, …): they are one
 clip split at four gigabytes and are joined back together automatically. More files can be
@@ -197,8 +202,9 @@ docker run --rm -p 8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
 ```
 
 The image carries ffmpeg and the tool, and no data: `-v` decides which track days it can
-see. Put the footage and the RaceBox exports in `data/<project>/` — inside the container
-there is no file dialog, so a project is assembled by dropping files into its folder.
+see. Put the footage and the RaceBox exports in `data/<project>/`, or upload them through
+the project panel — inside the container there is no file dialog, so the panel offers
+**Upload files…** and a drop target instead.
 
 The image is built for amd64 and arm64 on every push to `main` and published to the GitHub
 Container Registry; `:latest` tracks `main`, and version tags are published for releases.

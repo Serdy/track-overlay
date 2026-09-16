@@ -29,3 +29,11 @@ test('the selection is described in plain words', () => {
   assert.strictEqual(Picker.describe(['/x/a.csv']), '1 telemetry file');
   assert.strictEqual(Picker.describe([]), 'nothing chosen');
 });
+
+test('only the formats this reads are offered for upload', () => {
+  assert.ok(Picker.readable('GH013429.MP4'));
+  assert.ok(Picker.readable('session.csv'));
+  assert.ok(Picker.readable('session.vbo'));
+  assert.ok(!Picker.readable('notes.txt'));
+  assert.ok(!Picker.readable('GL013429.LRV'));
+});

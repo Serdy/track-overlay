@@ -368,6 +368,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._save_layout(project)
         if path == "/api/sources":
             return self._edit_sources(project)
+        if path == "/api/upload":
+            return self._receive_upload(project)
         if path == "/api/build":
             return self._start_build(project)
         if path == "/api/sync":
@@ -440,6 +442,55 @@ class Handler(BaseHTTPRequestHandler):
         except ProjectError as err:
             return self._error(HTTPStatus.BAD_REQUEST, str(err))
         self._json(project.as_dict())
+
+    def _receive_upload(self, project: Project) -> None:
+        """Takes one file into the project folder, streamed straight to disk.
+
+        This exists for the container, where there is no dialog to open and the disk the
+        footage is on is not the disk the server sees. It is a copy of several gigabytes
+        and slow by nature, which is exactly why it is offered only where picking a path
+        cannot work - on the machine itself, nothing is copied at all.
+
+        One file per request, named in the query rather than wrapped in multipart: the
+        body is then the file, and it can go to disk a megabyte at a time instead of
+        through memory.
+        """
+        _, _, query = self.path.partition("?")
+        wanted = ""
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "name":
+                wanted = unquote(value)
+        name = Path(wanted).name
+        if not name or name.startswith("."):
+            return self._error(HTTPStatus.BAD_REQUEST, "no file name was given")
+        if Path(name).suffix.lower() not in READABLE:
+            return self._error(HTTPStatus.BAD_REQUEST, f"cannot read {name}")
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self._error(HTTPStatus.BAD_REQUEST, f"{name} is empty")
+
+        project.root.mkdir(parents=True, exist_ok=True)
+        # Written beside the target and renamed, so a connection that drops halfway
+        # cannot leave a half file that looks like footage.
+        partial = project.root / f".{name}.part"
+        remaining = length
+        try:
+            with partial.open("wb") as handle:
+                while remaining > 0:
+                    block = self.rfile.read(min(CHUNK, remaining))
+                    if not block:
+                        break
+                    handle.write(block)
+                    remaining -= len(block)
+            if remaining:
+                raise OSError(f"{name} stopped {remaining} bytes short")
+            partial.replace(project.root / name)
+        except OSError as err:
+            partial.unlink(missing_ok=True)
+            return self._error(HTTPStatus.BAD_REQUEST, str(err))
+        self._json(projects.read(self.data_root, project.name).as_dict())
 
     def _choose_files(self) -> None:
         """Opens the system file dialog and returns what was picked.

@@ -83,7 +83,7 @@
                       'picker-add', 'picker-chosen', 'picker-build', 'picker-title',
                       'picker-track', 'picker-status', 'picker-build-id', 'home',
                       'picker-progress', 'picker-stage', 'picker-percent', 'picker-fill',
-                      'picker-drop', 'no-session']) {
+                      'picker-drop', 'picker-upload', 'picker-file', 'no-session']) {
       dom[id] = document.getElementById(id);
     }
   }
@@ -484,6 +484,62 @@
   }
 
   const removeSource = (path) => editSources({ remove: [path] });
+
+  /**
+   * Copies files into the project folder, one request each.
+   *
+   * XHR rather than fetch because this is the one place upload progress matters: a GoPro
+   * chunk is four gigabytes, and a bar that only moves between files would sit still for
+   * minutes. The files go one at a time so the disk writes stay sequential and the
+   * numbers on screen mean something.
+   */
+  async function uploadFiles(files) {
+    const wanted = [...files].filter((file) => Picker.readable(file.name));
+    const ignored = [...files].filter((file) => !Picker.readable(file.name));
+    dom['picker-status'].textContent = ignored.length
+      ? `ignored, not a format this reads: ${ignored.map((f) => f.name).join(', ')}`
+      : '';
+    if (!wanted.length) return;
+
+    const total = wanted.reduce((sum, file) => sum + file.size, 0);
+    let done = 0;
+    dom['picker-progress'].hidden = false;
+    dom['picker-upload'].disabled = true;
+    try {
+      for (const file of wanted) {
+        await sendFile(file, (sent) => {
+          showBuild((done + sent) / total, `uploading ${file.name}`);
+        });
+        done += file.size;
+      }
+      await loadProject();
+      dom['picker-status'].textContent = `${wanted.length} file(s) copied into the project`;
+    } catch (error) {
+      dom['picker-status'].textContent = String(error.message || error);
+    } finally {
+      dom['picker-progress'].hidden = true;
+      dom['picker-upload'].disabled = false;
+    }
+  }
+
+  function sendFile(file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open('POST', api(`/api/upload?name=${encodeURIComponent(file.name)}`));
+      request.setRequestHeader('Content-Type', 'application/octet-stream');
+      request.upload.addEventListener('progress', (event) => onProgress(event.loaded));
+      request.addEventListener('load', () => {
+        if (request.status >= 200 && request.status < 300) return resolve();
+        let detail = `the server answered ${request.status}`;
+        try {
+          detail = JSON.parse(request.responseText).error || detail;
+        } catch (error) { /* not JSON; the status will do */ }
+        reject(new Error(`${file.name}: ${detail}`));
+      });
+      request.addEventListener('error', () => reject(new Error(`${file.name}: upload failed`)));
+      request.send(file);
+    });
+  }
 
   /**
    * Asks the server to open the system file dialog.
@@ -1050,6 +1106,17 @@
     dom['open-picker'].addEventListener('click', openPicker);
     dom['picker-close'].addEventListener('click', () => { dom.picker.hidden = true; });
     dom['picker-add'].addEventListener('click', addFiles);
+    dom['picker-upload'].addEventListener('click', () => dom['picker-file'].click());
+    dom['picker-file'].addEventListener('change', () => {
+      uploadFiles(dom['picker-file'].files);
+      dom['picker-file'].value = '';          // so the same file can be picked again
+    });
+    for (const event of ['dragover', 'drop']) {
+      dom.picker.addEventListener(event, (e) => {
+        e.preventDefault();
+        if (event === 'drop' && !able.file_dialog) uploadFiles(e.dataTransfer.files);
+      });
+    }
     dom['picker-build'].addEventListener('click', buildSession);
     dom.home.addEventListener('click', () => { window.location.href = '/'; });
     dom.picker.addEventListener('click', (event) => {
@@ -1069,12 +1136,13 @@
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
     }
-    // There is no system file dialog in a container, so say what to do instead of
-    // offering a button that can only fail.
+    // Where a path can be picked, nothing is copied. Where it cannot - in a container,
+    // whose disk is not the disk the footage is on - the files have to come through the
+    // page instead, which is slow but at least possible.
     dom['picker-add'].hidden = !able.file_dialog;
+    dom['picker-upload'].hidden = able.file_dialog;
     dom['picker-drop'].hidden = able.file_dialog;
-    dom['picker-drop'].textContent =
-      `Put the files in ${able.data_root}/${project ? project.name : '<project>'}/ and reopen this panel`;
+    dom['picker-drop'].textContent = 'or drop them here';
   }
 
   function wire() {

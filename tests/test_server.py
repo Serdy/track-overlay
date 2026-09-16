@@ -2,6 +2,7 @@ import json
 import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from types import SimpleNamespace
 
@@ -368,3 +369,42 @@ def test_media_is_found_beside_the_project_when_its_path_moved(live):
     session.write_text(json.dumps(payload))
 
     assert fetch(live.url("/media/cam_1/0")).read() == MEDIA
+
+
+def upload(url, name, payload):
+    request = urllib.request.Request(
+        f"{url}?name={urllib.parse.quote(name)}", data=payload, method="POST",
+        headers={"Content-Type": "application/octet-stream"})
+    return urllib.request.urlopen(request)
+
+
+def test_a_file_can_be_uploaded_into_a_project(live):
+    """The container case: no dialog to open, and the footage is not on the server's disk."""
+    answer = json.load(upload(live.url("/api/upload"), "GH013429.MP4", b"pretend video"))
+    assert (live.folder / "GH013429.MP4").read_bytes() == b"pretend video"
+    assert answer["videos"] == 2                # the project's own clip plus this one
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "", ".hidden.csv"])
+def test_an_upload_the_tool_cannot_read_is_refused(live, name):
+    with pytest.raises(urllib.error.HTTPError) as err:
+        upload(live.url("/api/upload"), name, b"x")
+    assert err.value.code == 400
+
+
+def test_an_upload_cannot_escape_the_project_folder(live):
+    upload(live.url("/api/upload"), "../../escaped.csv", b"Record,Time\n")
+    assert (live.folder / "escaped.csv").is_file()
+    assert not (live.root.parent / "escaped.csv").exists()
+
+
+def test_an_empty_upload_is_refused(live):
+    with pytest.raises(urllib.error.HTTPError) as err:
+        upload(live.url("/api/upload"), "a.csv", b"")
+    assert err.value.code == 400
+
+
+def test_a_failed_upload_leaves_nothing_that_looks_like_footage(live):
+    with pytest.raises(urllib.error.HTTPError):
+        upload(live.url("/api/upload"), "a.csv", b"")
+    assert not list(live.folder.glob(".*.part"))
