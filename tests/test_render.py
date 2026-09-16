@@ -266,11 +266,42 @@ def test_trimmed_audio_comes_through_the_graph(tmp_path):
 def test_the_output_duration_drives_the_length_limit(tmp_path):
     layout = {**LAYOUT, "ranges": [{"from": 100, "to": 160}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
-    # The first -t sizes the black base, which must still span the whole session; the
-    # last one caps the output, and that is what shrinks with the ranges.
+    # The first -t sizes the black base, which has to reach the last moment read from the
+    # session; the last one caps the output, and that is what shrinks with the ranges.
     limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
-    assert limits[0] == "300.000"
+    assert limits[0] == "160.000"
     assert limits[-1] == "60.000"
+
+
+def test_a_window_late_in_the_session_is_rendered_where_it_is(tmp_path):
+    """Exporting one lap asks for a stretch in session time plus a length of output.
+
+    Clamping the stretch with that length - which is what used to happen - left nothing,
+    and the fallback rendered the opening minutes instead, with the overlay of the chosen
+    lap laid over the wrong picture.
+    """
+    layout = {**LAYOUT, "ranges": [{"from": 200, "to": 260}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4", duration_s=60)
+
+    graph = " ".join(plan.args)
+    assert "trim=start=200.000:end=260.000" in graph
+    limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
+    assert limits[-1] == "60.000"
+
+
+def test_a_preview_of_a_trimmed_session_starts_where_the_trim_does(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 100, "to": 300}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4", duration_s=10)
+
+    assert "trim=start=100.000:end=110.000" in " ".join(plan.args)
+    limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
+    assert limits[-1] == "10.000"
+
+
+def test_a_preview_of_an_untrimmed_session_is_the_opening_seconds(tmp_path):
+    plan = build_plan(SESSION, LAYOUT, None, tmp_path / "out.mp4", duration_s=10)
+    limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
+    assert limits[-1] == "10.000"
 
 
 def test_the_overlay_is_laid_on_after_the_trimming(tmp_path):

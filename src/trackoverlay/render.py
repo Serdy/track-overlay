@@ -157,13 +157,37 @@ def _keep_ranges(layout: dict, duration: float) -> list[tuple[float, float]]:
     return [(a, b) for a, b in merged] or [(0.0, duration)]
 
 
+def _take(kept: list[tuple[float, float]],
+          duration_s: float | None) -> list[tuple[float, float]]:
+    """The first `duration_s` seconds of output, as stretches of session time."""
+    if duration_s is None:
+        return kept
+    budget = duration_s
+    out = []
+    for start, end in kept:
+        if budget <= 1e-6:
+            break
+        out.append((start, min(end, start + budget)))
+        budget -= out[-1][1] - start
+    return out or kept[:1]
+
+
 def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
                *, bitrate: str = DEFAULT_BITRATE, duration_s: float | None = None) -> Plan:
     """Assembles the ffmpeg argument list without running anything."""
     out = layout.get("output", {})
     width, height = _even(out.get("width", 1920)), _even(out.get("height", 1080))
     fps = out.get("fps", 60)
-    total = duration_s if duration_s is not None else session["session"]["duration_s"]
+
+    # Two different clocks meet here and mixing them is the whole difficulty. Cuts and
+    # kept stretches are in session time; `duration_s` is a length of *output*, which is
+    # shorter as soon as anything is trimmed away. Clamping the stretches with it - the
+    # old behaviour - turned a window late in the session into nothing at all, and the
+    # fallback then rendered the opening minutes with the overlay of the chosen lap.
+    session_total = session["session"]["duration_s"]
+    kept = _take(_keep_ranges(layout, session_total), duration_s)
+    output_duration = sum(end - start for start, end in kept)
+    total = kept[-1][1] if kept else session_total
 
     clips = {clip["id"]: clip for clip in session.get("clips", [])}
     rects = _slot_rects(layout)
@@ -276,8 +300,6 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     # Cut stretches out by trimming the finished composite and concatenating what is
     # left. Doing it here, after compositing, means the cuts apply to every camera and to
     # the overlay at once, without repeating the trim on each input.
-    kept = _keep_ranges(layout, total)
-    output_duration = sum(end - start for start, end in kept)
     if len(kept) > 1 or kept[0] != (0.0, total):
         # trim needs several reads of the same stream, so both are split first.
         steps.append(f"{label}split={len(kept)}"
