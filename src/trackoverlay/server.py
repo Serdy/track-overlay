@@ -451,15 +451,19 @@ class Handler(BaseHTTPRequestHandler):
         request = self._body()
         if request is None:
             return
+        dropped = False
         try:
             for path in request.get("remove") or []:
                 project = projects.remove_source(project, Path(path))
+                dropped = _drop_clip(project, path) or dropped
             added = [Path(p) for p in request.get("files") or []]
             if added:
                 project = projects.add_sources(project, added)
         except ProjectError as err:
             return self._error(HTTPStatus.BAD_REQUEST, str(err))
-        self._json(project.as_dict())
+        # The editor holds a session that has just lost a camera, and a layout still
+        # arranging it. Saying so is cheaper than teaching the page to unpick that.
+        self._json({**project.as_dict(), "session_changed": dropped})
 
     def _receive_upload(self, project: Project) -> None:
         """Takes one file into the project folder, streamed straight to disk.
@@ -764,6 +768,30 @@ class Handler(BaseHTTPRequestHandler):
 
         threading.Thread(target=work, daemon=True).start()
         self._json(job.as_dict())
+
+
+def _drop_clip(project: Project, path: str) -> bool:
+    """Takes a camera out of a built session when its file is dropped from the project.
+
+    Removing the path alone would leave the session naming footage the project no longer
+    holds, which is exactly the state that made an export fail at the ffmpeg end. Only the
+    clip built from that path goes, and only when the file is really gone - a drive that
+    is merely unplugged keeps its camera.
+    """
+    if not project.has_session() or Path(path).exists():
+        return False
+    try:
+        payload = json.loads(project.session_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    clips = payload.get("clips") or []
+    kept = [clip for clip in clips if str(path) not in (clip.get("files") or [])]
+    if len(kept) == len(clips):
+        return False
+    payload["clips"] = kept
+    project.session_path.write_text(json.dumps(payload, ensure_ascii=False),
+                                    encoding="utf-8")
+    return True
 
 
 def _apply_offset(payload: dict, clip_id: str, manual_s: float) -> None:

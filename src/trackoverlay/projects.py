@@ -96,11 +96,14 @@ class Project:
         return summary
 
 
-def _missing_footage(project: "Project") -> list[str]:
+def _missing_footage(project: "Project") -> list[dict]:
     """Files the session names that are no longer on disk.
 
     Worth saying out loud: the editor shows a black slot and the render dies at the far
     end of a long ffmpeg command line, neither of which points at the camera involved.
+    The path comes back with it, because that is what has to be dropped to be rid of it —
+    and it is never dropped here: footage on a drive that is merely unplugged today must
+    still be there tomorrow.
     """
     try:
         payload = json.loads(project.session_path.read_text(encoding="utf-8"))
@@ -110,7 +113,8 @@ def _missing_footage(project: "Project") -> list[str]:
     for clip in payload.get("clips") or []:
         for name in clip.get("files") or []:
             if not resolve_source(name, project.root).exists():
-                gone.append(f"{clip.get('id')}: {Path(name).name}")
+                gone.append({"clip": clip.get("id"), "name": Path(name).name,
+                             "path": str(name)})
     return gone
 
 
@@ -274,9 +278,11 @@ def add_sources(project: Project, paths: list[Path]) -> Project:
 
 def remove_source(project: Project, path: Path) -> Project:
     """Drops a registered path. A file sitting in the folder is the person's to delete."""
-    target = path.resolve()
-    kept = [p for p in project.registered if p.resolve() != target]
-    if len(kept) == len(project.registered) and target.parent == project.root.resolve():
+    target = Path(path)
+    resolved = target.resolve()
+    kept = [p for p in project.registered
+            if p != target and p.resolve() != resolved]
+    if len(kept) == len(project.registered) and resolved.parent == project.root.resolve():
         raise ProjectError(f"{path.name} is in the project folder — remove it there")
     return write(replace(project, registered=kept))
 

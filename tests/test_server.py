@@ -352,6 +352,38 @@ def test_the_legacy_mode_still_serves_media(legacy):
     assert fetch(legacy, "/media/cam_1/0").read() == MEDIA
 
 
+def test_footage_that_is_gone_can_be_dropped_from_the_project(live):
+    session = live.folder / "session.json"
+    payload = json.loads(session.read_text())
+    payload["clips"][0]["files"] = ["/gone/GH013446.MP4"]
+    payload["clips"][0]["proxy"] = None
+    session.write_text(json.dumps(payload))
+    post(live.url("/api/sources"), {"files": []})
+
+    gone = json.load(fetch(live.url("/api/project")))["missing"]
+    assert gone == [{"clip": "cam_1", "name": "GH013446.MP4", "path": "/gone/GH013446.MP4"}]
+
+    answer = json.load(post(live.url("/api/sources"), {"remove": ["/gone/GH013446.MP4"]}))
+    assert "/gone/GH013446.MP4" not in answer["files"]
+    # The camera goes with it, or the session still names footage nobody has.
+    assert answer["session_changed"] is True
+    assert json.loads(session.read_text())["clips"] == []
+    assert json.load(fetch(live.url("/api/project")))["missing"] == []
+
+
+def test_a_camera_whose_drive_is_unplugged_is_not_dropped(live, tmp_path):
+    """Removing a path that still resolves means tidying the list, not losing a camera."""
+    elsewhere = tmp_path / "card"
+    elsewhere.mkdir()
+    (elsewhere / "GH013446.MP4").write_bytes(b"x")
+    post(live.url("/api/sources"), {"files": [str(elsewhere / "GH013446.MP4")]})
+
+    answer = json.load(post(live.url("/api/sources"),
+                            {"remove": [str(elsewhere / "GH013446.MP4")]}))
+    assert answer["session_changed"] is False
+    assert len(json.loads((live.folder / "session.json").read_text())["clips"]) == 1
+
+
 def test_the_page_is_told_what_this_machine_can_do(live):
     """In a container there is no file dialog to open, and a button that can only fail is
     worse than no button."""

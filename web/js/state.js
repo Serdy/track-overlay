@@ -457,10 +457,15 @@
       row.querySelector('.size').addEventListener('click', () => removeSource(path));
       dom['picker-list'].appendChild(row);
     }
+    // A file the session names that is no longer there. It keeps its ✕, because the
+    // path is all that is left of it and dropping that is how it stops coming back.
     for (const gone of project.missing || []) {
       const row = document.createElement('div');
       row.className = 'warn';
-      row.textContent = `${gone} — file gone; build the session again without it`;
+      row.innerHTML = `<span>⚠</span><span>${gone.clip}: ${gone.name} — file gone`
+        + `</span><span class="size">✕</span>`;
+      row.title = gone.path;
+      row.querySelector('.size').addEventListener('click', () => removeSource(gone.path));
       dom['picker-list'].appendChild(row);
     }
     dom['picker-title'].textContent = project.title || project.name;
@@ -483,6 +488,9 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || `the server answered ${response.status}`);
       project = result;
+      // A camera has gone from the session the editor is holding, and from the layout
+      // that arranges it. Start again rather than unpick it in place.
+      if (result.session_changed) return window.location.reload();
       renderSources();
     } catch (error) {
       dom['picker-status'].textContent = String(error.message || error);
@@ -1014,7 +1022,8 @@
       dom['export-panel'].hidden = false;
       dom['export-stage'].textContent = 'cannot render';
       dom['export-error'].textContent =
-        `${gone.join('; ')} — build the session again without it`;
+        `${gone.map((f) => `${f.clip}: ${f.name}`).join('; ')} is gone — remove it in`
+        + ' Files, or build the session again';
       return;
     }
 

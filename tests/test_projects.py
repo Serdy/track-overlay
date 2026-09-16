@@ -233,6 +233,25 @@ def test_files_already_in_the_folder_are_not_registered_twice(tmp_path):
     assert sorted(p.name for p in projects.sources(project)) == ["inside.csv"]
 
 
+def test_footage_that_is_gone_is_reported_with_its_path(tmp_path):
+    root = _legacy(tmp_path / "data" / "day")
+    gone = projects.read(tmp_path / "data", "day").as_dict()["missing"]
+
+    assert gone == [{"clip": "cam_1", "name": "GH013429.MP4",
+                     "path": str(root.parent / "card" / "GH013429.MP4")}]
+
+
+def test_a_registered_path_can_be_dropped_after_the_file_is_gone(tmp_path):
+    video = tmp_path / "card" / "GH013429.MP4"
+    video.parent.mkdir()
+    video.write_bytes(b"x")
+    project = projects.add_sources(projects.create(tmp_path / "data", "Day"), [video])
+    video.unlink()
+
+    project = projects.remove_source(project, video)
+    assert project.registered == []
+
+
 def test_a_card_describes_a_built_project(tmp_path):
     _legacy(tmp_path / "data" / "day")
     card = projects.read(tmp_path / "data", "day").as_dict()
