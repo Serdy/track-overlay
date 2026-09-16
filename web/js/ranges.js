@@ -122,13 +122,12 @@ const Ranges = (function () {
     }], duration);
   }
 
-  /**
-   * One lap with room either side: a few seconds of approach, a moment of run-off.
-   *
-   * Starting exactly on the timing line gives no idea of how the lap was entered, which
-   * is most of what a fast lap is.
-   */
-  function aroundLap(lap, duration, { before = 3, after = TAIL_S } = {}) {
+  // Room either side of an exported lap. Starting exactly on the timing line gives no
+  // idea of how the lap was entered, which is most of what a fast lap is, and ending on
+  // it stops mid-corner.
+  const MARGIN_S = 4;
+
+  function aroundLap(lap, duration, { before = MARGIN_S, after = MARGIN_S } = {}) {
     if (!lap) return full(duration);
     return normalise([{
       from: Math.max(0, lap.t_start - before),
@@ -146,7 +145,7 @@ const Ranges = (function () {
   }
 
   return { full, normalise, cut, keepOnly, total, toSession, toOutput, isKept, gaps,
-           lapsOnly, aroundLap, same, TAIL_S };
+           lapsOnly, aroundLap, same, TAIL_S, MARGIN_S };
 }());
 
 if (typeof module !== 'undefined' && module.exports) {

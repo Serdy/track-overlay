@@ -158,10 +158,11 @@ test('the run-off cannot run past the end of the session', () => {
 
 test('one lap is exported with its approach and its run-off', () => {
   const lap = { n: 3, t_start: 100, t_end: 260 };
-  assert.deepStrictEqual(Ranges.aroundLap(lap, 600), [{ from: 97, to: 262 }]);
+  assert.deepStrictEqual(Ranges.aroundLap(lap, 600),
+                         [{ from: 100 - Ranges.MARGIN_S, to: 260 + Ranges.MARGIN_S }]);
 });
 
-test('the approach is clamped at the start of the session', () => {
-  assert.deepStrictEqual(Ranges.aroundLap({ t_start: 1, t_end: 160 }, 600),
+test('the margins are clamped to the session at both ends', () => {
+  assert.deepStrictEqual(Ranges.aroundLap({ t_start: 1, t_end: 160 }, 162),
                          [{ from: 0, to: 162 }]);
 });
