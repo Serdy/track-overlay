@@ -130,6 +130,17 @@ def _pick_source(clip: dict, seek_s: float, needed_s: float,
     return clip.get("_concat"), seek_s, True
 
 
+def _shift(spans: list[dict], base_t: float, total: float) -> list[dict]:
+    """Moves camera arrangements onto the graph's own clock and drops what falls outside."""
+    moved = []
+    for span in spans:
+        start, end = span["from"] - base_t, span["to"] - base_t
+        if end <= 1e-6 or start >= total - 1e-6:
+            continue
+        moved.append({**span, "from": max(0.0, start), "to": min(total, end)})
+    return moved
+
+
 def _even(value: float) -> int:
     """Rounds to an even number of pixels — h264 refuses odd dimensions."""
     return max(2, int(round(value / 2)) * 2)
@@ -187,11 +198,21 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     session_total = session["session"]["duration_s"]
     kept = _take(_keep_ranges(layout, session_total), duration_s)
     output_duration = sum(end - start for start, end in kept)
-    total = kept[-1][1] if kept else session_total
+
+    # Graph time zero is the first moment kept, not the start of the session. Composing
+    # from zero and trimming afterwards meant a lap exported from 16 minutes in had those
+    # 16 minutes composed at full resolution first and then thrown away - seven times the
+    # work, and a progress bar that sat still throughout, because output time does not
+    # begin to move until the trim starts producing frames.
+    base_t = kept[0][0] if kept else 0.0
+    total = (kept[-1][1] - base_t) if kept else session_total
+    kept = [(start - base_t, end - base_t) for start, end in kept]
 
     clips = {clip["id"]: clip for clip in session.get("clips", [])}
     rects = _slot_rects(layout)
-    spans = _windows(layout, total)
+    spans = [span for span in _shift(_windows(layout, base_t + total), base_t, total)]
+    if not spans:
+        raise RenderError("nothing is on screen for the stretch being rendered")
 
     used = sorted({span["clip"] for span in spans})
     missing = [clip_id for clip_id in used if clip_id not in clips]
@@ -225,7 +246,8 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     next_input = 0 if base_clip is not None else 1   # input 0 is the black canvas
     for clip_id in used:
         clip = clips[clip_id]
-        offset = clip["offset_s"]
+        # Where this camera sits once the graph starts at the first kept moment.
+        offset = clip["offset_s"] - base_t
         source, seek, use_concat = _pick_source(
             clip, max(0.0, -offset), total, None)
         if source is None:

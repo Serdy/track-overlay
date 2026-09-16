@@ -215,13 +215,20 @@ def test_without_ranges_nothing_is_trimmed(tmp_path):
     assert plan.duration_s == 300.0
 
 
-def test_a_single_range_trims_the_ends(tmp_path):
-    """The case that prompted this: a long in-lap and a long cool-down."""
+def test_a_single_range_is_seeked_to_rather_than_trimmed(tmp_path):
+    """The case that prompted this: a long in-lap and a long cool-down.
+
+    One kept stretch needs no trim at all - the graph simply starts there. Composing from
+    zero and cutting afterwards meant doing the discarded part at full resolution first.
+    """
     layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
     graph = graph_of(plan)
-    assert "trim=start=40.000:end=250.000" in graph
+    assert "trim=" not in graph
     assert plan.duration_s == pytest.approx(210.0)
+    # The camera is entered 40 seconds further in, so graph time zero is session time 40.
+    seeks = [plan.args[i + 1] for i, a in enumerate(plan.args) if a in ("-ss", "-itsoffset")]
+    assert any(abs(float(v) - (40 - SESSION["clips"][0]["offset_s"])) < 0.01 for v in seeks)
 
 
 def test_two_ranges_are_concatenated(tmp_path):
@@ -255,21 +262,29 @@ def test_empty_ranges_mean_keep_everything(tmp_path):
         assert plan.duration_s == 300.0
 
 
-def test_trimmed_audio_comes_through_the_graph(tmp_path):
+def test_audio_from_a_single_range_needs_no_trimming(tmp_path):
+    """Seeking the input carries its audio with it; only several stretches need cutting."""
     layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
     maps = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-map"]
+    assert any(m.endswith(":a?") for m in maps)
+    assert "atrim=" not in graph_of(plan)
+
+
+def test_audio_is_cut_when_there_are_several_stretches(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 0, "to": 40}, {"from": 60, "to": 300}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+    maps = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-map"]
     assert "[ca]" in maps
-    assert "atrim=start=40.000" in graph_of(plan)
+    assert "atrim=start=0.000" in graph_of(plan)
 
 
 def test_the_output_duration_drives_the_length_limit(tmp_path):
     layout = {**LAYOUT, "ranges": [{"from": 100, "to": 160}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
-    # The first -t sizes the black base, which has to reach the last moment read from the
-    # session; the last one caps the output, and that is what shrinks with the ranges.
+    # Both the black base and the output now span the kept stretch and nothing more.
     limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
-    assert limits[0] == "160.000"
+    assert limits[0] == "60.000"
     assert limits[-1] == "60.000"
 
 
@@ -283,8 +298,8 @@ def test_a_window_late_in_the_session_is_rendered_where_it_is(tmp_path):
     layout = {**LAYOUT, "ranges": [{"from": 200, "to": 260}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4", duration_s=60)
 
-    graph = " ".join(plan.args)
-    assert "trim=start=200.000:end=260.000" in graph
+    seeks = [plan.args[i + 1] for i, a in enumerate(plan.args) if a in ("-ss", "-itsoffset")]
+    assert any(abs(float(v) - (200 - SESSION["clips"][0]["offset_s"])) < 0.01 for v in seeks)
     limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
     assert limits[-1] == "60.000"
 
@@ -293,7 +308,8 @@ def test_a_preview_of_a_trimmed_session_starts_where_the_trim_does(tmp_path):
     layout = {**LAYOUT, "ranges": [{"from": 100, "to": 300}]}
     plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4", duration_s=10)
 
-    assert "trim=start=100.000:end=110.000" in " ".join(plan.args)
+    seeks = [plan.args[i + 1] for i, a in enumerate(plan.args) if a in ("-ss", "-itsoffset")]
+    assert any(abs(float(v) - (100 - SESSION["clips"][0]["offset_s"])) < 0.01 for v in seeks)
     limits = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"]
     assert limits[-1] == "10.000"
 
@@ -312,7 +328,7 @@ def test_the_overlay_is_laid_on_after_the_trimming(tmp_path):
     """
     overlay = tmp_path / "overlay.mp4"
     overlay.touch()
-    layout = {**LAYOUT, "ranges": [{"from": 40, "to": 250}]}
+    layout = {**LAYOUT, "ranges": [{"from": 0, "to": 40}, {"from": 60, "to": 250}]}
     graph = graph_of(build_plan(SESSION, layout, overlay, tmp_path / "out.mp4"))
     steps = graph.split(";")
     concat = next(i for i, s in enumerate(steps) if "concat=" in s)
@@ -405,3 +421,14 @@ def test_footage_still_in_the_project_folder_passes(tmp_path):
     (tmp_path / "GH013446.MP4").write_bytes(b"x")
     session = {"clips": [{"id": "cam_3446", "files": ["/moved/away/GH013446.MP4"]}]}
     render.check_footage(session, tmp_path)
+
+
+def test_a_lap_late_in_the_session_does_not_compose_what_comes_before_it(tmp_path):
+    """The bar used to sit at 35% for minutes: output time does not move while the part
+    that will be thrown away is being composed, and here that was seven eighths of it."""
+    layout = {**LAYOUT, "ranges": [{"from": 240, "to": 290}]}
+    plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
+
+    base = [plan.args[i + 1] for i, a in enumerate(plan.args) if a == "-t"][0]
+    assert base == "50.000", "the black canvas spans the kept stretch, not the session"
+    assert "trim=" not in graph_of(plan)
