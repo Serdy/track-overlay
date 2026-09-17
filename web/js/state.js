@@ -695,7 +695,9 @@
     clearTimeout(syncTimers.get(clip.id));
     syncTimers.set(clip.id, setTimeout(() => {
       syncTimers.delete(clip.id);
-      saveSync(clip.id, seconds);
+      saveSync(clip.id, seconds).catch((error) => {
+        dom['sync-saved'].textContent = String(error.message || error);
+      });
     }, 400));
   }
 
@@ -710,24 +712,35 @@
     }));
   }
 
+  /**
+   * Sends one camera's correction. Throws if the server did not take it.
+   *
+   * Swallowing the failure here made a camera look confirmed while `session.json` kept the
+   * old offset - and that file is what ffmpeg reads, so the reassurance was the opposite
+   * of the truth.
+   */
   async function saveSync(clipId, seconds, confirmed) {
-    try {
-      const response = await fetch(api('/api/sync'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clip: clipId, manual_s: seconds, confirmed }),
-      });
-      if (!response.ok) throw new Error((await response.json()).error || 'could not save');
-      dom['sync-saved'].textContent = 'saved';
-    } catch (error) {
-      dom['sync-saved'].textContent = String(error.message || error);
+    const response = await fetch(api('/api/sync'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip: clipId, manual_s: seconds, confirmed }),
+    }).catch((error) => { throw new Error(`could not save: ${error.message || error}`); });
+    if (!response.ok) {
+      throw new Error((await response.json().catch(() => ({}))).error || 'could not save');
     }
+    dom['sync-saved'].textContent = 'saved';
   }
 
   async function confirmSync() {
     const clip = currentClip();
-    await flushSync();
-    await saveSync(clip.id, clip.offset_s - autoOffset(clip), true);
+    try {
+      await flushSync();
+      await saveSync(clip.id, clip.offset_s - autoOffset(clip), true);
+    } catch (error) {
+      // Nothing is marked confirmed on a save the server never took.
+      dom['sync-saved'].textContent = String(error.message || error);
+      return;
+    }
     clip.sync = Object.assign({}, clip.sync, { confirmed: true });
 
     // Every camera carries its own offset, so every camera has to be looked at.
@@ -1076,7 +1089,7 @@
 
     data.laps = LapTimes.stateAt(lapModel, session, time);
     data.lapList = LapTimes.boardAt(lapModel, time);
-    data.map = prepareMap(frame);
+    data.map = prepareMap(frame, arrangement);
     data.trail = trailFor(time);
     Widgets.drawAll(ctx, arrangement.widgets, frame, data);
   }
@@ -1131,12 +1144,23 @@
     const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, frozen.output,
                                  { duration: session.duration });
 
-    exporting = new AbortController();
-    await flushSync();
-    await flushLayout();
     dom['export-panel'].hidden = false;
     dom['export-done'].hidden = true;
     dom['export-error'].textContent = '';
+
+    // A correction still in flight has to reach the session before ffmpeg reads it. If it
+    // cannot, the render would use the old offset, so nothing starts.
+    try {
+      await flushSync();
+      await flushLayout();
+    } catch (error) {
+      dom['export-stage'].textContent = 'nothing was rendered';
+      dom['export-error'].textContent =
+        `${error.message || error} — the sync correction did not reach the session`;
+      return;
+    }
+
+    exporting = new AbortController();
     dom.export.disabled = true;
     Clock.pause(clock);
 
@@ -1279,10 +1303,12 @@
     dom.export.addEventListener('click', startExport);
 
     dom['open-sync'].addEventListener('click', openSync);
-    dom['sync-clip'].addEventListener('change', async () => {
-      await flushSync();          // the camera being left keeps its correction
+    dom['sync-clip'].addEventListener('change', () => {
+      // The selection moves first. Awaiting the flush before it left the dropdown showing
+      // one camera while the slider still acted on the other.
       syncClip = dom['sync-clip'].value;
       renderSync();
+      flushSync();                // the camera being left keeps its correction
     });
     dom['sync-slider'].addEventListener('input',
                                         () => setManual(Number(dom['sync-slider'].value)));
@@ -1373,8 +1399,17 @@
   // resolutions and both go through here.
   const mapCache = new Map();
 
-  function prepareMap(frame) {
-    const placement = layout.widgets.find((w) => w.type === 'map');
+  /**
+   * The map's projection, cached by the box it was built for.
+   *
+   * `from` is the layout being drawn: the live one in the preview, an export's frozen copy
+   * while it runs. Reading the global here was what let a widget switched off or dragged
+   * mid-export change the map halfway through the finished file, even after the widget
+   * list itself had been frozen - the map is the one widget with state prepared apart from
+   * its drawing, so freezing the list alone left it out.
+   */
+  function prepareMap(frame, from) {
+    const placement = (from || layout).widgets.find((w) => w.type === 'map');
     if (!placement) return null;
     const key = `${frame.width}x${frame.height}:${placement.pos.join(',')}:${placement.scale}`;
     if (!mapCache.has(key)) {
