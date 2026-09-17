@@ -24,7 +24,11 @@
   let payload = null;           // the session as it came off the wire
   let project = null;           // the project this page is editing
   let syncClip = null;          // which camera the sync panel is adjusting
-  const syncTimers = new Map();   // clip id -> pending save
+  const syncTimers = new Map();   // clip id -> debounce timer
+  // Clips whose correction the server has not taken. Cleared by a successful save and by
+  // nothing else: a rejected save used to vanish from the queue, so the export refused
+  // once and then ran with the old offset on the next press.
+  const syncDirty = new Set();
   let brakingPoints = [];       // the frames worth checking the sync against
   let brakingAt = -1;
   let sound = false;            // only the main slot is ever unmuted
@@ -692,23 +696,34 @@
     // One pending save per camera. A single shared timer meant selecting another camera
     // within the debounce cancelled the first one's save, leaving it corrected in the
     // preview and untouched in the session - which is what ffmpeg reads.
+    syncDirty.add(clip.id);
     clearTimeout(syncTimers.get(clip.id));
     syncTimers.set(clip.id, setTimeout(() => {
       syncTimers.delete(clip.id);
-      saveSync(clip.id, seconds).catch((error) => {
-        dom['sync-saved'].textContent = String(error.message || error);
-      });
+      saveSync(clip.id, seconds).catch(reportSync);
     }, 400));
   }
 
-  /** Sends every pending correction now, and waits for them. */
+  function reportSync(error) {
+    dom['sync-saved'].textContent = String(error.message || error);
+  }
+
+  /**
+   * Sends every correction the server has not taken, and waits for them.
+   *
+   * Driven by `syncDirty` rather than by the timers: a save that failed has no timer left,
+   * and dropping it there is how a refused export turned into a silent one on the retry.
+   */
   async function flushSync() {
-    const pending = [...syncTimers.entries()];
+    for (const timer of syncTimers.values()) clearTimeout(timer);
     syncTimers.clear();
-    await Promise.all(pending.map(([clipId, timer]) => {
-      clearTimeout(timer);
+    await Promise.all([...syncDirty].map((clipId) => {
       const clip = session.clips.find((c) => c.id === clipId);
-      return clip ? saveSync(clipId, clip.offset_s - autoOffset(clip)) : null;
+      if (!clip) {
+        syncDirty.delete(clipId);      // the camera went; nothing to save it against
+        return null;
+      }
+      return saveSync(clipId, clip.offset_s - autoOffset(clip));
     }));
   }
 
@@ -728,6 +743,7 @@
     if (!response.ok) {
       throw new Error((await response.json().catch(() => ({}))).error || 'could not save');
     }
+    syncDirty.delete(clipId);          // only the server taking it clears the flag
     dom['sync-saved'].textContent = 'saved';
   }
 
@@ -1096,7 +1112,20 @@
 
   async function startExport() {
     if (exporting) return;
+    // Claimed before the first await, not after it. Two clicks inside the preflight both
+    // used to get through, and two ffmpeg jobs then wrote one file through one shared
+    // overlay layer.
+    exporting = new AbortController();
+    dom.export.disabled = true;
+    try {
+      await runExport();
+    } finally {
+      exporting = null;
+      dom.export.disabled = false;
+    }
+  }
 
+  async function runExport() {
     // Asked before anything is encoded: the layer takes minutes, and a render that cannot
     // start should not be discovered at the end of them.
     const gone = await fetch(api('/api/project'))
@@ -1160,8 +1189,6 @@
       return;
     }
 
-    exporting = new AbortController();
-    dom.export.disabled = true;
     Clock.pause(clock);
 
     const show = (done) => {
@@ -1193,9 +1220,6 @@
     } catch (error) {
       dom['export-stage'].textContent = 'failed';
       dom['export-error'].textContent = String(error.message || error);
-    } finally {
-      exporting = null;
-      dom.export.disabled = false;
     }
   }
 
@@ -1308,7 +1332,8 @@
       // one camera while the slider still acted on the other.
       syncClip = dom['sync-clip'].value;
       renderSync();
-      flushSync();                // the camera being left keeps its correction
+      // The camera being left keeps its correction, and says so if it cannot.
+      flushSync().catch(reportSync);
     });
     dom['sync-slider'].addEventListener('input',
                                         () => setManual(Number(dom['sync-slider'].value)));
