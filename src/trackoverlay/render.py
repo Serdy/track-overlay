@@ -149,12 +149,18 @@ def _even(value: float) -> int:
 def _keep_ranges(layout: dict, duration: float) -> list[tuple[float, float]]:
     """The stretches of the session that make it into the video.
 
-    Mirrors ``Ranges.normalise`` in the browser. Absent or empty means keep everything —
-    a layout from before this feature existed must still render.
+    Mirrors ``Ranges.normalise`` in the browser. **Absent** means keep everything — a
+    layout from before this feature existed must still render. An **empty list** is the
+    opposite and has to be told apart from it: the editor writes one when every stretch
+    has been cut away, and treating that as "keep everything" rendered the whole session
+    under an overlay pinned to session zero. Nobody asked for a video there, so the render
+    refuses instead.
     """
     raw = layout.get("ranges")
-    if not raw:
+    if raw is None:
         return [(0.0, duration)]
+    if not raw:
+        raise RenderError("every part of the session has been cut away")
     clean = sorted(
         (max(0.0, float(r["from"])), min(duration, float(r["to"]))) for r in raw)
     merged: list[list[float]] = []
@@ -165,7 +171,9 @@ def _keep_ranges(layout: dict, duration: float) -> list[tuple[float, float]]:
             merged[-1][1] = max(merged[-1][1], end)
         else:
             merged.append([start, end])
-    return [(a, b) for a, b in merged] or [(0.0, duration)]
+    if not merged:
+        raise RenderError("what is kept adds up to nothing")
+    return [(a, b) for a, b in merged]
 
 
 def _take(kept: list[tuple[float, float]],

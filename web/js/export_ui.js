@@ -69,7 +69,7 @@ const ExportUI = (function () {
    * `duration` limits the render to the first N seconds, which is how a layout gets
    * checked without waiting for the full session.
    */
-  async function run({ base = '', output, drawFrame, duration, name, kept, toSession,
+  async function run({ base = '', output, layout, drawFrame, duration, name, kept, toSession,
                        onStage, onProgress, signal }) {
     const width = output.width;
     const height = output.height;
@@ -90,7 +90,10 @@ const ExportUI = (function () {
     await post(`${base}/api/overlay`, blob, blob.type);
 
     onStage('composing with ffmpeg');
-    const job = await post(`${base}/api/render`, JSON.stringify({ duration: to, name }),
+    // The layout travels with the request rather than being read off disk: it is the one
+    // the layer was drawn against, and the editor stays live while ffmpeg runs.
+    const job = await post(`${base}/api/render`,
+                           JSON.stringify({ duration: to, name, layout }),
                            'application/json');
     const finished = await follow(job.id,
       (done) => onProgress(OVERLAY_SHARE + done * (1 - OVERLAY_SHARE)), signal);

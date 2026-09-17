@@ -24,7 +24,7 @@
   let payload = null;           // the session as it came off the wire
   let project = null;           // the project this page is editing
   let syncClip = null;          // which camera the sync panel is adjusting
-  let syncTimer = null;
+  const syncTimers = new Map();   // clip id -> pending save
   let brakingPoints = [];       // the frames worth checking the sync against
   let brakingAt = -1;
   let sound = false;            // only the main slot is ever unmuted
@@ -143,7 +143,7 @@
     requestAnimationFrame(tick);
 
     // Until a person has looked at it, the sync is the machine's guess and nothing more.
-    if (!(payload.session || {}).sync_confirmed) openSync();
+    if (unconfirmedClip()) openSync();
   }
 
   /**
@@ -347,7 +347,14 @@
 
     remember();
     if (action === 'cut') {
-      layout.ranges = Ranges.cut(keptRanges(), from, to, session.duration);
+      const left = Ranges.cut(keptRanges(), from, to, session.duration);
+      if (!left.length || Ranges.total(left) <= 0) {
+        // Cutting the session away entirely leaves nothing to render, and a layout that
+        // says so is indistinguishable from one that says nothing at the far end.
+        window.alert('That would cut the whole session away.');
+        return;
+      }
+      layout.ranges = left;
       renderGapMarks();
     } else {
       layout.cuts = Cuts.swapRange(layout.cuts, from, to);
@@ -637,6 +644,21 @@
     nextBraking();
   }
 
+  /**
+   * The first camera nobody has confirmed, or null once every one has been.
+   *
+   * The old session-wide `sync_confirmed` was set by confirming whichever camera happened
+   * to be selected, so on a session with several it says nothing about the others and is
+   * honoured only where there is one camera to be ambiguous about. The cost is one extra
+   * look per camera on older projects; the alternative is the camera nobody checked going
+   * into the video.
+   */
+  function unconfirmedClip() {
+    const legacy = (payload.session || {}).sync_confirmed && session.clips.length === 1;
+    if (legacy) return null;
+    return session.clips.find((clip) => !(clip.sync || {}).confirmed) || null;
+  }
+
   function currentClip() {
     return session.clips.find((clip) => clip.id === syncClip) || session.clips[0];
   }
@@ -666,8 +688,26 @@
     dom['sync-value'].textContent = `${seconds >= 0 ? '+' : ''}${seconds.toFixed(2)} s`;
     syncVideos(clock.time);
     render(clock.time);
-    clearTimeout(syncTimer);
-    syncTimer = setTimeout(() => saveSync(clip.id, seconds), 400);
+
+    // One pending save per camera. A single shared timer meant selecting another camera
+    // within the debounce cancelled the first one's save, leaving it corrected in the
+    // preview and untouched in the session - which is what ffmpeg reads.
+    clearTimeout(syncTimers.get(clip.id));
+    syncTimers.set(clip.id, setTimeout(() => {
+      syncTimers.delete(clip.id);
+      saveSync(clip.id, seconds);
+    }, 400));
+  }
+
+  /** Sends every pending correction now, and waits for them. */
+  async function flushSync() {
+    const pending = [...syncTimers.entries()];
+    syncTimers.clear();
+    await Promise.all(pending.map(([clipId, timer]) => {
+      clearTimeout(timer);
+      const clip = session.clips.find((c) => c.id === clipId);
+      return clip ? saveSync(clipId, clip.offset_s - autoOffset(clip)) : null;
+    }));
   }
 
   async function saveSync(clipId, seconds, confirmed) {
@@ -686,8 +726,20 @@
 
   async function confirmSync() {
     const clip = currentClip();
-    clearTimeout(syncTimer);
+    await flushSync();
     await saveSync(clip.id, clip.offset_s - autoOffset(clip), true);
+    clip.sync = Object.assign({}, clip.sync, { confirmed: true });
+
+    // Every camera carries its own offset, so every camera has to be looked at.
+    const next = unconfirmedClip();
+    if (next) {
+      syncClip = next.id;
+      brakingAt = -1;
+      renderSync();
+      nextBraking();
+      dom['sync-saved'].textContent = `now check ${next.id}`;
+      return;
+    }
     dom['sync-panel'].hidden = true;
     describe();
   }
@@ -720,6 +772,20 @@
   // --- sound -----------------------------------------------------------------------
 
   /**
+   * The camera the finished video will be heard through.
+   *
+   * ffmpeg maps one uninterrupted audio stream, from whichever camera holds the main slot
+   * where the render begins - there is no mixing and no switching. The preview used to
+   * follow the main slot instead, so after the first swap it played one camera and the
+   * export another, which is the divergence the whole overlay design exists to prevent.
+   */
+  function audioClip() {
+    const ranges = keptRanges();
+    const opening = Cuts.resolveAt(layout.cuts, ranges.length ? ranges[0].from : 0) || {};
+    return opening.main || (session.clips[0] || {}).id || null;
+  }
+
+  /**
    * Turns the sound on or off, remembering the choice.
    *
    * Autoplay rules only allow unmuted playback after the page has been clicked, which by
@@ -729,6 +795,9 @@
     sound = !sound;
     dom.sound.textContent = sound ? '🔊' : '🔇';
     dom.sound.classList.toggle('armed', sound);
+    dom.sound.title = sound
+      ? `Sound from ${audioClip() || 'the opening camera'} — the one the render uses (M)`
+      : 'Sound from the camera the render takes its audio from (M)';
     try {
       window.localStorage.setItem('trackoverlay.sound', sound ? '1' : '0');
     } catch (error) {
@@ -993,7 +1062,8 @@
    * The export calls exactly this, and so does the preview — which is the reason the two
    * cannot end up showing different things.
    */
-  function paintOverlay(ctx, time, frame) {
+  function paintOverlay(ctx, time, frame, from) {
+    const arrangement = from || layout;
     const score = Scoring.scoreAt(scores, session, time);
     const data = SessionModel.sampleMany(session, ['speed', 'lean', 'accel', 'lat', 'lon'], time);
     data.score = score;
@@ -1008,7 +1078,7 @@
     data.lapList = LapTimes.boardAt(lapModel, time);
     data.map = prepareMap(frame);
     data.trail = trailFor(time);
-    Widgets.drawAll(ctx, layout.widgets, frame, data);
+    Widgets.drawAll(ctx, arrangement.widgets, frame, data);
   }
 
   async function startExport() {
@@ -1029,24 +1099,40 @@
 
     const choice = dom['export-range'].value;
     const limit = Number(choice) || 0;
-    const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, layout.output,
-                                 { duration: session.duration });
 
-    // The best lap is a window, not a length, and the renderer knows only about kept
-    // stretches - so it is expressed as one for the duration of this export and put back
-    // afterwards. The layout on disk is what the render reads, hence the round trip.
     const lap = choice === 'best' ? SessionModel.bestLap(session) : null;
-    const wasKept = layout.ranges;
-    if (choice === 'best') {
-      if (!lap) {
-        dom['export-panel'].hidden = false;
-        dom['export-error'].textContent = 'no timed lap to export yet';
-        return;
-      }
-      layout.ranges = Ranges.aroundLap(lap, session.duration);
+    if (choice === 'best' && !lap) {
+      dom['export-panel'].hidden = false;
+      dom['export-error'].textContent = 'no timed lap to export yet';
+      return;
     }
 
+    /**
+     * The layout this export renders, frozen here and not touched again.
+     *
+     * Everything downstream reads from this copy: the frames, the range mapping, and the
+     * layout the server composes with. The live one used to be edited in place - the best
+     * lap wrote its window into it and restored it afterwards - so a tab closed mid-export
+     * left that window as the person's saved trimming, and moving a widget while the layer
+     * encoded made it jump partway through the finished video.
+     */
+    const frozen = JSON.parse(JSON.stringify(layout));
+    if (lap) frozen.ranges = Ranges.aroundLap(lap, session.duration);
+
+    const ranges = frozen.ranges || Ranges.full(session.duration);
+    if (!ranges.length || Ranges.total(ranges) <= 0) {
+      dom['export-panel'].hidden = false;
+      dom['export-stage'].textContent = 'nothing to render';
+      dom['export-error'].textContent =
+        'every part of the session has been cut away — undo a cut, or press laps';
+      return;
+    }
+
+    const output = Object.assign({ width: 1920, height: 1080, fps: 60 }, frozen.output,
+                                 { duration: session.duration });
+
     exporting = new AbortController();
+    await flushSync();
     await flushLayout();
     dom['export-panel'].hidden = false;
     dom['export-done'].hidden = true;
@@ -1060,15 +1146,15 @@
     };
 
     try {
-      const ranges = keptRanges();
       const where = await ExportUI.run({
         base: BASE,
         output,
+        layout: frozen,
         toSession: (outputTime) => Ranges.toSession(ranges, outputTime),
         kept: Ranges.total(ranges),
         duration: limit || null,
         name: lap ? `best_lap_${lap.n}.mp4` : (limit ? `preview_${limit}s.mp4` : 'final.mp4'),
-        drawFrame: paintOverlay,
+        drawFrame: (ctx, t, frame) => paintOverlay(ctx, t, frame, frozen),
         signal: exporting.signal,
         onStage: (text) => { dom['export-stage'].textContent = text; },
         onProgress: show,
@@ -1086,12 +1172,6 @@
     } finally {
       exporting = null;
       dom.export.disabled = false;
-      if (choice === 'best') {
-        layout.ranges = wasKept;
-        await flushLayout();
-        renderGapMarks();
-        render(clock.time);
-      }
     }
   }
 
@@ -1199,7 +1279,8 @@
     dom.export.addEventListener('click', startExport);
 
     dom['open-sync'].addEventListener('click', openSync);
-    dom['sync-clip'].addEventListener('change', () => {
+    dom['sync-clip'].addEventListener('change', async () => {
+      await flushSync();          // the camera being left keeps its correction
       syncClip = dom['sync-clip'].value;
       renderSync();
     });
@@ -1380,9 +1461,7 @@
       const inSlot = arrangement.main === clip.id ? 'main'
                    : (arrangement.pip === clip.id ? 'pip' : null);
       placeInSlot(slot, inSlot);
-      // The export takes its audio from whichever camera holds the main slot, so the
-      // preview does the same - otherwise the sound would change on the way out.
-      element.muted = !sound || inSlot !== 'main';
+      element.muted = !sound || clip.id !== audioClip();
       if (!inSlot) {
         if (!element.paused) element.pause();
         continue;

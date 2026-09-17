@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,7 +47,7 @@ def _project(root, name, track):
     proxy = folder / f"{name}.lrv"
     proxy.write_bytes(b"P" * 50)
     (folder / "session.json").write_text(json.dumps({
-        "session": {"track": track},
+        "session": {"track": track, "duration_s": 100.0},
         "clips": [{"id": "cam_1", "files": [str(media)], "proxy": [str(proxy)],
                    "offset_s": 1.4}],
     }), encoding="utf-8")
@@ -282,7 +283,7 @@ def test_a_confirmed_sync_reaches_the_session(live):
 
     session = json.loads((live.folder / "session.json").read_text())
     assert session["clips"][0]["auto_offset_s"] == pytest.approx(1.4)
-    assert session["session"]["sync_confirmed"] is True
+    assert session["clips"][0]["sync"]["confirmed"] is True
     assert projects.read(live.root, "demo").manual_sync == {"cam_1": 0.5}
 
 
@@ -459,3 +460,44 @@ def test_a_real_failure_is_still_reported(capsys):
     except ValueError:
         quiet.handle_error(None, ("127.0.0.1", 0))
     assert "something actually went wrong" in capsys.readouterr().err
+
+
+def test_an_upload_never_lands_on_an_existing_source(live):
+    """Two cameras produce the same filenames from their own cards, and the copy in the
+    project may be the only one left of either."""
+    upload(live.url("/api/upload"), "GH013429.MP4", b"first camera")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        upload(live.url("/api/upload"), "GH013429.MP4", b"second camera")
+
+    assert err.value.code == 409
+    assert (live.folder / "GH013429.MP4").read_bytes() == b"first camera"
+
+
+def test_confirming_the_sync_marks_only_that_camera(live):
+    session = live.folder / "session.json"
+    payload = json.loads(session.read_text())
+    payload["clips"].append({"id": "cam_2", "files": [], "offset_s": 0.0})
+    session.write_text(json.dumps(payload))
+
+    post(live.url("/api/sync"), {"clip": "cam_1", "manual_s": 0.5, "confirmed": True})
+    clips = {c["id"]: c for c in json.loads(session.read_text())["clips"]}
+    assert clips["cam_1"]["sync"]["confirmed"] is True
+    assert "confirmed" not in clips["cam_2"].get("sync", {})
+
+
+def test_a_render_uses_the_layout_it_was_sent(live):
+    """The layer was drawn against that layout; the file on disk may have moved on — a
+    widget dragged or a resolution changed while ffmpeg was still running."""
+    (live.folder / "layout.json").write_text(json.dumps(
+        {"cuts": [{"t": 0, "main": "cam_1", "pip": None}], "output": {"width": 640}}))
+    sent = {"cuts": [{"t": 0, "main": "cam_nowhere", "pip": None}],
+            "output": {"width": 1280, "height": 720, "fps": 30}}
+
+    job = json.load(post(live.url("/api/render"), {"duration": 1, "layout": sent}))
+    for _ in range(50):
+        state = json.load(fetch(live.base, f"/api/render/{job['id']}"))
+        if state["state"] != "running":
+            break
+        time.sleep(0.1)
+    # The sent layout names a camera the session does not have; the file on disk does not.
+    assert "cam_nowhere" in state["message"]

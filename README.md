@@ -177,7 +177,7 @@ uv run trackoverlay serve --project slovakia-ring-2026-09-12
 | Trim to the timed laps, and back | `laps` — lit while trimmed |
 | Undo one change | `↶` or ⌘Z (⇧⌘Z to redo) |
 | Undo all of it | `↺` |
-| Sound from the main camera | `🔇` or M |
+| Sound from the camera the render uses | `🔇` or M |
 | Choose which widgets show | `⊞ widgets` |
 | Check the sync again | `⇆ sync` |
 | Back to the project list | `☰ Projects` |

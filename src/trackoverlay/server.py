@@ -493,6 +493,13 @@ class Handler(BaseHTTPRequestHandler):
         if length <= 0:
             return self._error(HTTPStatus.BAD_REQUEST, f"{name} is empty")
 
+        # Never over an existing source. Two GoPros produce the same filenames from their
+        # own cards, and the copy in the project may be the only one left of either.
+        if (project.root / name).exists():
+            return self._error(HTTPStatus.CONFLICT,
+                               f"{name} is already in this project — rename it, or remove "
+                               f"the one that is there")
+
         project.root.mkdir(parents=True, exist_ok=True)
         # Written beside the target and renamed, so a connection that drops halfway
         # cannot leave a half file that looks like footage.
@@ -616,7 +623,12 @@ class Handler(BaseHTTPRequestHandler):
                 _apply_offset(payload, clip_id, manual)
                 projects.set_manual_sync(project, clip_id, manual)
             if request.get("confirmed"):
-                payload.setdefault("session", {})["sync_confirmed"] = True
+                # Per clip, not per session: confirming the camera that happened to be
+                # selected used to hide the panel for every other one, and an unchecked
+                # camera can be swapped into the video with a silently wrong offset.
+                for clip in payload.get("clips") or []:
+                    if clip_id is None or clip.get("id") == clip_id:
+                        clip.setdefault("sync", {})["confirmed"] = True
         except (ValueError, TypeError) as err:
             return self._error(HTTPStatus.BAD_REQUEST, str(err))
         project.session_path.write_text(json.dumps(payload, ensure_ascii=False),
@@ -730,7 +742,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(HTTPStatus.BAD_REQUEST, "no layout has been saved yet")
 
         session = json.loads(project.session_path.read_text(encoding="utf-8"))
-        layout = json.loads(project.layout_path.read_text(encoding="utf-8"))
+        # The editor sends the layout the overlay layer was drawn against. Reading the
+        # file instead would compose whatever had been saved since - a widget moved while
+        # ffmpeg ran, or a resolution changed - against a layer that knows nothing of it.
+        layout = request.get("layout")
+        if not isinstance(layout, dict):
+            layout = json.loads(project.layout_path.read_text(encoding="utf-8"))
         try:
             # Answered now rather than as a failed job minutes later.
             render_module.check_footage(session, project.root)

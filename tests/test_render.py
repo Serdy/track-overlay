@@ -255,11 +255,24 @@ def test_ranges_are_clamped_to_the_session(tmp_path):
     assert plan.duration_s == pytest.approx(300.0)
 
 
-def test_empty_ranges_mean_keep_everything(tmp_path):
+def test_an_absent_range_list_means_keep_everything(tmp_path):
     """A layout saved before ranges existed must still render in full."""
-    for value in ([], None):
-        plan = build_plan(SESSION, {**LAYOUT, "ranges": value}, None, tmp_path / "out.mp4")
+    for layout in ({**LAYOUT, "ranges": None}, {k: v for k, v in LAYOUT.items() if k != "ranges"}):
+        plan = build_plan(SESSION, layout, None, tmp_path / "out.mp4")
         assert plan.duration_s == 300.0
+
+
+def test_an_empty_range_list_is_refused_rather_than_rendered_whole(tmp_path):
+    """The editor writes [] when every stretch has been cut away. Reading that as "keep
+    everything" produced a full video under an overlay pinned to session zero."""
+    with pytest.raises(RenderError, match="cut away"):
+        build_plan(SESSION, {**LAYOUT, "ranges": []}, None, tmp_path / "out.mp4")
+
+
+def test_ranges_that_add_up_to_nothing_are_refused(tmp_path):
+    layout = {**LAYOUT, "ranges": [{"from": 40, "to": 40}, {"from": 100, "to": 100}]}
+    with pytest.raises(RenderError, match="adds up to nothing"):
+        build_plan(SESSION, layout, None, tmp_path / "out.mp4")
 
 
 def test_audio_from_a_single_range_needs_no_trimming(tmp_path):
