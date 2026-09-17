@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv sync                                   # set up
 uv run trackoverlay                       # the whole tool: project list in a browser
+uv run trackoverlay serve --host 0.0.0.0  # as the container image runs it
 
 uv run pytest                             # Python tests
 uv run pytest tests/test_sync.py -k xcorr # one file, one test
@@ -54,7 +55,11 @@ decision is kept in `project.json` as well, because a rebuild rewrites the sessi
 
 **Time inside a session is seconds from `session.start_utc`.** Output time is not session
 time once anything is cut: `Ranges.toSession` / `toOutput` convert, and the overlay is
-drawn in output time while telemetry is addressed in session time.
+drawn in output time while telemetry is addressed in session time. In `render.build_plan`
+a third clock appears — graph time, which starts at the first kept moment. Mixing any two
+of them is the shape every sync bug here has taken: a window clamped by an output length
+rendered the opening minutes, and composing from zero before trimming did seven times the
+work with a progress bar that never moved.
 
 **`cuts` is a sparse list of arrangements, not of changes.** Each entry says what the
 slots hold from that moment. It maps one-to-one onto ffmpeg's `enable='between(t,a,b)'`.
@@ -86,6 +91,13 @@ survives — silently cancelling the sync correction. `setpts` goes only on seek
 
 **The overlay is composited after range trimming**, or the range offset is applied twice.
 
+**A single kept stretch is seeked to, never trimmed to.** The graph starts there, so there
+is no trim or concat stage and the audio comes straight off the seeked input.
+
+**Nothing downstream runs against footage that is gone.** The project panel, the export
+and the render each refuse early and name the camera; only the render used to find out,
+at the far end of an ffmpeg command line.
+
 ## Conventions
 
 - Pure JS modules (`clock`, `cuts`, `ranges`, `layout`, `display`, `laptimes`, `history`,
@@ -96,7 +108,9 @@ survives — silently cancelling the sync correction. `setpts` goes only on seek
 - Adding a `web/js/*.js` file means adding a `<script>` to `web/index.html`; load order
   matters, and `state.js` is last.
 - Widgets register themselves into `Widgets`; the widget menu is built from that registry.
-  Nothing adds a widget back into a layout that lacks it — unticking has to stick.
+  Nothing adds a widget back into a layout that lacks it — unticking has to stick. A
+  camera the session gains later is different: `Cuts.adopt` gives it the free inset, or it
+  would be synced and invisible.
 - The server stamps `?v=<mtime>` onto assets and serves them `no-store`. Stamped URLs are
   rooted: from `/p/<name>/` a relative one resolves inside the project and 404s in silence.
 - CSS: `[hidden] { display: none !important }` is load-bearing. A `display:` rule outranks

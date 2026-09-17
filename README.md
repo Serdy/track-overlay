@@ -1,6 +1,7 @@
 # track-overlay
 
 [![tests](https://github.com/Serdy/track-overlay/actions/workflows/ci.yml/badge.svg)](https://github.com/Serdy/track-overlay/actions/workflows/ci.yml)
+[![image](https://github.com/Serdy/track-overlay/actions/workflows/image.yml/badge.svg)](https://github.com/Serdy/track-overlay/pkgs/container/track-overlay)
 
 Burns telemetry from a **RaceBox** logger into onboard **GoPro** footage and composes a
 finished MP4. Several cameras at once, picture-in-picture, swappable mid-session. Runs
@@ -29,7 +30,9 @@ you set up once and reuse for every session of the day.
   read the way they would have on the bike rather than knowing the session in advance
 - Composes any number of cameras with picture-in-picture, lets you swap them over a
   stretch, and cut the ride out and back off the ends
-- Renders the lot into a single MP4 with hardware encoding
+- Keeps a project per track day, so a session is assembled once and reopened later
+- Renders the lot into a single MP4, hardware-encoded where the machine has an encoder —
+  the whole session, a short preview, or the best lap on its own
 
 ## How it works
 
@@ -110,6 +113,10 @@ camera card is on and pushing twenty-four gigabytes through a browser to reach i
 be pure waste. Files dropped into the folder by hand are picked up as well, so a project
 can also be assembled in Finder.
 
+If footage a built session names has since been moved or deleted, the panel says which
+camera it belonged to and offers to drop it; nothing downstream will run until it is gone
+or back, and the export says so before it encodes anything.
+
 Under Docker there is no dialog to open and the container's disk is not the disk the
 footage is on, so the button becomes **Upload files…** — files can also be dropped onto
 the panel. That copies them into the project folder, which is slow for a four gigabyte
@@ -140,9 +147,10 @@ names the file it is on.
 
 The editor then opens on the sync check, because everything downstream rests on that one
 number and the machine's answer is only as good as the overlap it had to work with. It
-shows the method and correlation, jumps to the hardest braking point, and draws the speed
-trace under the picture: at a braking marker the two agree or they visibly do not. The
-slider shifts one camera; **Looks right** confirms it.
+shows the method and correlation and jumps to the hardest braking point, where the
+readouts under the picture are at their most telling: at a braking marker the telemetry
+and the frame agree or they visibly do not. The slider shifts one camera, **Next braking**
+moves to another one to check against, and **Looks right** confirms it.
 
 A confirmed correction is kept in `project.json` and folded into `session.json`, which is
 what the renderer reads — so unlike the old preview-only slider, it reaches the finished
@@ -178,16 +186,21 @@ Everything is saved to the project's `layout.json` as you go, and reloaded next 
 timeline carries thumbnails from the opening camera, so a place worth cutting or swapping
 at can be found by eye.
 
+Press **Export** to compose. Start with the 10-second option to check the layout before
+committing to a full session, or pick **best lap** — that renders the quickest lap with
+four seconds of approach and the same again of run-off, which is the clip worth sending
+to anyone. Only what is kept is composed: a lap from twenty minutes in starts there rather
+than being composed from the beginning and cut afterwards.
+
+The tab can be left in the background. The overlay is driven by encoder events rather than
+timers, which browsers clamp to about one call a second once a tab stops being visible,
+and the progress of the ffmpeg half wakes the moment the page is looked at again.
+
 When it finishes, **Download** saves the file through the browser and **Show in Finder**
 reveals it where it already is — which is usually what you want, since a finished render
 runs to hundreds of megabytes and downloading writes a second copy onto the same disk.
 
-Press **Export** to compose. Start with the 10-second option to check the layout before
-committing to a full session, or pick **best lap** — that renders the quickest lap with
-four seconds of approach and the same again of run-off, which is the clip worth sending
-to anyone. The tab can be left in the background while it runs - the
-render loop is driven by encoder events rather than timers, which browsers clamp to about
-one call a second once a tab stops being visible. The same thing from a terminal:
+The same thing from a terminal:
 
 ```bash
 P=data/slovakia-ring-2026-09-12
@@ -318,6 +331,7 @@ src/trackoverlay/
   render.py           the ffmpeg filter graph
   server.py           project routes, range requests, and launching renders
 web/
+  projects.html       the project list; index.html is the editor
   js/clock.js         the single source of the current time
   js/session.js       the session model and channel sampling
   js/cuts.js          which camera is in which slot, and when that changes
