@@ -19,7 +19,7 @@ uv run trackoverlay build data/<project>/*.csv data/<project>/*.MP4 \
 uv run trackoverlay serve --project <name>
 uv run trackoverlay render <session> <layout> --overlay <overlay> -o out.mp4
 
-docker build -t track-overlay . && docker run --rm -p 8712:8712 -v "$PWD/data:/data" track-overlay
+docker build -t track-overlay . && docker run --rm -p 127.0.0.1:8712:8712 -v "$PWD/data:/data" track-overlay
 ```
 
 Tests needing the source video skip themselves; the RaceBox exports are committed, so lap

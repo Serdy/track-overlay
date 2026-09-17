@@ -80,7 +80,7 @@ for the machine: VideoToolbox on macOS, libx264 elsewhere, or whatever
 With Docker, nothing else to install:
 
 ```bash
-docker run --rm -p 8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
+docker run --rm -p 127.0.0.1:8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
 ```
 
 Or from a checkout:
@@ -211,7 +211,7 @@ uv run trackoverlay render "$P/session.json" "$P/layout.json" \
 ### Docker
 
 ```bash
-docker run --rm -p 8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
+docker run --rm -p 127.0.0.1:8712:8712 -v "$PWD/data:/data" ghcr.io/serdy/track-overlay
 ```
 
 The image carries ffmpeg and the tool, and no data: `-v` decides which track days it can
@@ -221,6 +221,10 @@ the project panel — inside the container there is no file dialog, so the panel
 
 The image is built for amd64 and arm64 on every push to `main` and published to the GitHub
 Container Registry; `:latest` tracks `main`, and version tags are published for releases.
+
+The port is published on loopback on purpose. There is no login on any of this — it reads
+and writes the disk it is given and runs ffmpeg on request — so it belongs on the machine
+in front of you, not on an address anyone else can reach.
 
 Two things worth knowing. Rendering uses libx264 in the container, since VideoToolbox is
 macOS-only and would fail rather than fall back — pass `-e TRACKOVERLAY_CODEC=h264_nvenc`

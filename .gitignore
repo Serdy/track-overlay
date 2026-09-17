@@ -10,8 +10,15 @@ out/
 *.MP4
 *.LRV
 *.THM
+# Everybody's own track days stay out; one sample project is committed, because the
+# telemetry is small and the tests and CI build a real session from it.
+data/*/*.csv
+data/*/*.vbo
+!data/slovakia-ring-2026-09-12/*.csv
+!data/slovakia-ring-2026-09-12/*.vbo
+
 # A project's own state: absolute paths to footage on this machine, plus a session that
-# is rebuilt from the sources in seconds. Only the telemetry itself is worth committing.
+# is rebuilt from the sources in seconds.
 data/*/out/
 data/*/project.json
 data/*/session.json
