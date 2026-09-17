@@ -27,3 +27,7 @@ data_bak/
 
 # Browser automation artifacts
 .playwright-cli/
+
+# Review archives: half a megabyte of agent transcripts per round. The calibration beside
+# them is committed, since that is what makes a review mean anything here.
+.revmux/tasks/
