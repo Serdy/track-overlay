@@ -9,9 +9,9 @@
   const MAX_DEG = 60;             // how far the fan opens each way
   const TICK_DEG = 10;            // a mark every ten degrees
 
-  // Márquez corners at somewhere past sixty. This is a joke, and the number is the one
-  // to move if it should land more often - a track day lives around forty-five.
-  const MARQUEZ_DEG = 53;
+  // Márquez corners at somewhere past sixty. This is a joke, so the number is set where a
+  // good track-day corner reaches rather than where the comparison would be fair.
+  const MARQUEZ_DEG = 40;
 
   const UP = -Math.PI / 2;        // canvas angles run clockwise from due east
 
