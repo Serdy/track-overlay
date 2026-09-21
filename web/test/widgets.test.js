@@ -311,12 +311,12 @@ test('the dial says LEAN until the angle earns the joke', () => {
   const text = (ctx) => ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
 
   const ordinary = fakeCtx();
-  Widgets.get('leandial').draw(ordinary, BOX, { leanValue: 35, leanSide: 1 });
+  Widgets.get('leandial').draw(ordinary, BOX, { leanValue: 45, leanSide: 1 });
   assert.ok(text(ordinary).includes('LEAN'));
-  assert.ok(text(ordinary).includes('35°'));
+  assert.ok(text(ordinary).includes('45°'));
 
   const heroic = fakeCtx();
-  Widgets.get('leandial').draw(heroic, BOX, { leanValue: 40, leanSide: -1 });
+  Widgets.get('leandial').draw(heroic, BOX, { leanValue: 50, leanSide: -1 });
   assert.ok(text(heroic).includes('ALMOST MÁRQUEZ'));
   assert.ok(!text(heroic).includes('LEAN'));
 });
