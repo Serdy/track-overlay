@@ -2,8 +2,16 @@
 name = "trackoverlay"
 version = "0.1.0"
 description = "Overlay RaceBox telemetry onto GoPro video"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Alex Serdiuk" }]
+keywords = ["telemetry", "gopro", "racebox", "gpmf", "video-overlay", "track-day"]
 requires-python = ">=3.12,<3.14"
 dependencies = ["numpy>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/Serdy/track-overlay"
+Issues = "https://github.com/Serdy/track-overlay/issues"
 
 [project.scripts]
 trackoverlay = "trackoverlay.cli:main"
