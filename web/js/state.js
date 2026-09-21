@@ -881,7 +881,11 @@
   /** Where a widget lands when it is switched on: its place in the default layout. */
   function placementFor(id) {
     const known = DEFAULT_LAYOUT.widgets.find((widget) => widget.type === id);
-    return known ? JSON.parse(JSON.stringify(known)) : { type: id, pos: [0.04, 0.05], scale: 1 };
+    if (known) return JSON.parse(JSON.stringify(known));
+    // A widget outside the default layout says where it would rather sit; the top-left
+    // corner is only the fallback for one that does not.
+    const spot = (Widgets.get(id) || {}).defaultPos || [0.04, 0.05];
+    return { type: id, pos: [...spot], scale: 1 };
   }
 
   // --- the filmstrip along the timeline ------------------------------------------

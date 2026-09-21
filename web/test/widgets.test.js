@@ -8,6 +8,7 @@ require('../js/widgets/lean.js');
 require('../js/widgets/accel.js');
 require('../js/widgets/laptime.js');
 require('../js/widgets/laplist.js');
+require('../js/widgets/leandial.js');
 
 /** Fake canvas context: records calls and catches non-finite coordinates. */
 function fakeCtx() {
@@ -24,10 +25,14 @@ function fakeCtx() {
     calls,
     save: record('save'), restore: record('restore'),
     beginPath: record('beginPath'), fill: record('fill'),
+    closePath: record('closePath'), stroke: record('stroke'),
+    moveTo: record('moveTo'), lineTo: record('lineTo'), arc: record('arc'),
     rect: record('rect'), roundRect: record('roundRect'),
     fillRect: record('fillRect'), fillText: record('fillText'),
     set fillStyle(v) { calls.push({ name: 'fillStyle', args: [v] }); },
     set font(v) {}, set textAlign(v) {}, set textBaseline(v) {},
+    set strokeStyle(v) { calls.push({ name: 'strokeStyle', args: [v] }); },
+    set lineWidth(v) {},
   };
 }
 
@@ -37,7 +42,8 @@ const FRAME = { width: 1920, height: 1080 };
 test('the registry knows the widgets and invents none', () => {
   // The map require sits further down the file but runs on load, before any test body.
   assert.deepStrictEqual(Widgets.ids().sort(),
-                         ['accel', 'laplist', 'laptime', 'lean', 'map', 'speed']);
+                         ['accel', 'laplist', 'laptime', 'lean', 'leandial', 'map',
+                          'speed']);
   assert.strictEqual(Widgets.get('no such thing'), null);
 });
 
@@ -134,6 +140,7 @@ test('drawAll skips unknown types without dropping the rest', () => {
 require('../js/widgets/map.js');
 require('../js/widgets/laptime.js');
 require('../js/widgets/laplist.js');
+require('../js/widgets/leandial.js');
 
 const ENVELOPE = {
   left: [[48.000, 17.000], [48.010, 17.000], [48.010, 17.020], [48.000, 17.020]],
@@ -274,4 +281,54 @@ test('a lap list with nothing in it yet still draws', () => {
   Widgets.get('laplist').draw(ctx, { x: 0, y: 0, w: 260, h: 260 }, { lapList: [] });
   const text = ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
   assert.ok(text.includes('—'));
+});
+
+
+test('the lean dial fills the side the bike is leaning', () => {
+  const right = fakeCtx();
+  Widgets.get('leandial').draw(right, BOX, { leanValue: 40, leanSide: 1 });
+  const rightArc = right.calls.find((c) => c.name === 'arc');
+
+  const left = fakeCtx();
+  Widgets.get('leandial').draw(left, BOX, { leanValue: 40, leanSide: -1 });
+  const leftArc = left.calls.find((c) => c.name === 'arc');
+
+  // Both sweep from upright; the sector that gets filled is on opposite sides of it.
+  assert.ok(rightArc.args[3] < rightArc.args[4]);
+  assert.ok(leftArc.args[3] < leftArc.args[4]);
+  assert.notDeepStrictEqual(rightArc.args.slice(3), leftArc.args.slice(3));
+});
+
+test('upright draws no sector at all', () => {
+  const ctx = fakeCtx();
+  Widgets.get('leandial').draw(ctx, BOX, { leanValue: 0, leanSide: 0 });
+  // The outline arc is still there; the filled one is not, so there is no closePath.
+  assert.ok(!ctx.calls.some((c) => c.name === 'closePath'));
+  assert.ok(ctx.calls.some((c) => c.name === 'arc'));
+});
+
+test('the dial says LEAN until the angle earns the joke', () => {
+  const ordinary = fakeCtx();
+  Widgets.get('leandial').draw(ordinary, BOX, { leanValue: 45, leanSide: 1 });
+  const text = (ctx) => ctx.calls.filter((c) => c.name === 'fillText').map((c) => c.args[0]);
+  assert.ok(text(ordinary).includes('LEAN'));
+  assert.ok(text(ordinary).includes('45°'));
+
+  const heroic = fakeCtx();
+  Widgets.get('leandial').draw(heroic, BOX, { leanValue: 53, leanSide: -1 });
+  assert.ok(text(heroic).includes('ALMOST MÁRQUEZ'));
+  assert.ok(!text(heroic).includes('LEAN'));
+});
+
+test('a dial with no lean data still draws', () => {
+  const ctx = fakeCtx();
+  Widgets.get('leandial').draw(ctx, BOX, {});
+  assert.ok(ctx.calls.some((c) => c.name === 'fillText'));
+});
+
+test('an angle past the end of the fan does not run off it', () => {
+  const ctx = fakeCtx();
+  Widgets.get('leandial').draw(ctx, BOX, { leanValue: 200, leanSide: 1 });
+  const arc = ctx.calls.find((c) => c.name === 'arc');
+  assert.ok(arc.args[4] - arc.args[3] <= Math.PI / 3 + 1e-9);
 });

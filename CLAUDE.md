@@ -107,7 +107,9 @@ at the far end of an ffmpeg command line.
   them to test. Keep new logic on the pure side.
 - Adding a `web/js/*.js` file means adding a `<script>` to `web/index.html`; load order
   matters, and `state.js` is last.
-- Widgets register themselves into `Widgets`; the widget menu is built from that registry.
+- Widgets register themselves into `Widgets`, with their own `defaultSize` and an optional
+  `defaultPos` for where they land when switched on; the widget menu is built from that
+  registry.
   Nothing adds a widget back into a layout that lacks it — unticking has to stick. A
   camera the session gains later is different: `Cuts.adopt` gives it the free inset, or it
   would be synced and invisible.

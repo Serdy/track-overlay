@@ -124,6 +124,6 @@ web/
   js/laptimes.js      lap times and the delta measured at equal distance
   js/history.js       undo and redo over layout snapshots
   js/filmstrip.js     where the timeline thumbnails go, and in what order
-  js/widgets/         speed, lean, acceleration, map, lap board, lap list
+  js/widgets/         speed, lean bar and dial, acceleration, map, lap board, lap list
   js/export_overlay.js  the telemetry layer, through WebCodecs
 ```
