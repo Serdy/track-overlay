@@ -44,3 +44,9 @@ def rb_cornering() -> Path:
 @pytest.fixture(scope="session")
 def rb_vbo() -> Path:
     return FIXTURES / "racebox_head.vbo"
+
+
+@pytest.fixture(scope="session")
+def rc_vbo() -> Path:
+    """A VBO out of RaceChrono: the same format, another writer's spelling of it."""
+    return FIXTURES / "racechrono_head.vbo"

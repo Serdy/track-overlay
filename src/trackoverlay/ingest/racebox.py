@@ -33,10 +33,19 @@ _CSV_COLUMNS = {
 }
 
 # VBO columns mapped to internal names. lat/lng and time are handled separately.
+#
+# One channel has several spellings in the wild: RaceBox capitalises, RaceLogic does not,
+# and RaceChrono suffixes with `-calc` what it worked out itself instead of measuring.
+# Later entries win, so a measured column overrides a computed one of the same channel.
 _VBO_COLUMNS = {
     "velocity": "speed_kmh", "heading": "heading_deg", "height": "alt_m",
+    "lean_angle-calc": "lean_deg", "lean-angle": "lean_deg",
+    "longacc-calc": "g_long", "latacc-calc": "g_lat",
+    "longacc": "g_long", "latacc": "g_lat", "vertacc": "g_vert",
     "LongAcc": "g_long", "LatAcc": "g_lat", "VertAcc": "g_vert",
-    "lean-angle": "lean_deg",
+    "x_rate_of_rotation-gyro": "gyro_x",
+    "y_rate_of_rotation-gyro": "gyro_y",
+    "z_rate_of_rotation-gyro": "gyro_z",
     "x-rotation-gyroscope": "gyro_x",
     "y-rotation-gyroscope": "gyro_y",
     "z-rotation-gyroscope": "gyro_z",
@@ -101,6 +110,14 @@ def read_csv(path: Path) -> RaceBoxData:
     return RaceBoxData(times, columns, path)
 
 
+def _parse_vbo_date(token: str) -> _dt.date | None:
+    """``12/09/2026`` as written in the header and in RaceBox's comments."""
+    try:
+        return _dt.datetime.strptime(token, "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
 def _parse_vbo_time(token: str) -> float:
     """``123130.12`` becomes seconds since UTC midnight."""
     value = float(token)
@@ -119,7 +136,8 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
 
     VBO time carries no date, only a time of day, so the date has to be supplied through
     ``day_utc`` (midnight of that day in epoch seconds). Without it the date is taken from
-    the ``UTC Date Started`` line in the comments section.
+    the ``UTC Date Started`` comment, or from the ``File created on`` line every writer of
+    the format puts first.
     """
     text = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
@@ -127,6 +145,7 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
     rows: list[list[str]] = []
     section = None
     started: _dt.date | None = None
+    created: _dt.date | None = None
     for line in text:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
@@ -134,9 +153,13 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
             continue
         if not stripped:
             continue
-        if section == "comments" and stripped.startswith("UTC Date Started"):
+        if section is None and stripped.startswith("File created on"):
+            # Both RaceBox and RaceChrono open with this line, in UTC and in the same
+            # clock as the data, differing only in what separates date from time.
+            created = _parse_vbo_date(stripped.split()[3])
+        elif section == "comments" and stripped.startswith("UTC Date Started"):
             stamp = stripped.split(":", 1)[1].strip()
-            started = _dt.datetime.strptime(stamp.split()[0], "%d/%m/%Y").date()
+            started = _parse_vbo_date(stamp.split()[0])
         elif section == "column names":
             names = stripped.split()
         elif section == "data":
@@ -145,11 +168,13 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
     if names is None or not rows:
         raise RaceBoxError(f"{path.name}: no [column names] and [data] sections")
     if day_utc is None:
+        started = started or created
         if started is None:
-            # VBO carries a time of day and no date, and the line that usually supplies it
-            # is RaceBox's own - other loggers write their comments differently. The file's
-            # own date is the best guess left, and a wrong guess is not silent: the video
-            # then fails to correlate and the sync panel says so.
+            # VBO carries a time of day and no date, and neither line that supplies one is
+            # guaranteed: RaceBox's comment is its own, and a hand-edited file may have
+            # lost the header. The file's own date is the best guess left, and a wrong
+            # guess is not silent - the video then fails to correlate and the sync panel
+            # says so.
             started = _dt.datetime.fromtimestamp(
                 path.stat().st_mtime, _dt.timezone.utc).date()
         day_utc = _dt.datetime.combine(
@@ -173,8 +198,14 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
         # VBOX flips the sign of longitude: west is positive there.
         columns["lon"] = [-_parse_vbo_coord(r[index["lng"]]) for r in rows]
     for src, dst in _VBO_COLUMNS.items():
-        if src in index:
-            columns[dst] = [float(r[index[src]]) for r in rows]
+        if src not in index:
+            continue
+        values = [float(r[index[src]]) for r in rows]
+        # RaceChrono writes its accelerometer columns whether or not a sensor was
+        # connected, and a channel of nothing but zeroes would then be preferred over one
+        # derived from speed. An empty slot is not a measurement.
+        if any(values):
+            columns[dst] = values
     return RaceBoxData(times, columns, path)
 
 
