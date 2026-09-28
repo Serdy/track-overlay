@@ -77,7 +77,8 @@
                       'cut-marks', 'gap-marks', 'pending-range',
                       'resolution',
                       'sync-panel', 'sync-clip', 'sync-method', 'sync-slider',
-                      'sync-value', 'sync-brake', 'sync-confirm',
+                      'sync-value', 'sync-brake', 'sync-confirm', 'sync-back',
+                      'sync-forward',
                       'sync-saved', 'sync-later', 'open-sync',
                       'strip', 'undo', 'redo', 'widgets-button', 'widgets-menu',
                       'export', 'export-range', 'export-panel', 'export-stage',
@@ -677,7 +678,7 @@
       `${sync.method || 'unknown'} · correlation ${(sync.correlation || 0).toFixed(3)}`;
     dom['sync-method'].className = sync.reliable ? 'muted' : 'warn';
     dom['sync-slider'].value = String(manual);
-    dom['sync-value'].textContent = `${manual >= 0 ? '+' : ''}${manual.toFixed(2)} s`;
+    dom['sync-value'].textContent = Display.offset(manual);
   }
 
   function autoOffset(clip) {
@@ -689,7 +690,8 @@
   function setManual(seconds) {
     const clip = currentClip();
     clip.offset_s = autoOffset(clip) + seconds;
-    dom['sync-value'].textContent = `${seconds >= 0 ? '+' : ''}${seconds.toFixed(2)} s`;
+    dom['sync-slider'].value = String(seconds);
+    dom['sync-value'].textContent = Display.offset(seconds);
     syncVideos(clock.time);
     render(clock.time);
 
@@ -1341,6 +1343,11 @@
     });
     dom['sync-slider'].addEventListener('input',
                                         () => setManual(Number(dom['sync-slider'].value)));
+    // A frame at 60 fps is 17 ms, so the useful corrections are finer than a slider can
+    // be dragged to. These two are the same step the arrow keys take.
+    const STEP_S = 0.005;
+    dom['sync-back'].addEventListener('click', () => nudgeSync(-STEP_S));
+    dom['sync-forward'].addEventListener('click', () => nudgeSync(STEP_S));
     dom['sync-brake'].addEventListener('click', nextBraking);
     dom['sync-confirm'].addEventListener('click', confirmSync);
     dom['sync-later'].addEventListener('click', () => { dom['sync-panel'].hidden = true; });

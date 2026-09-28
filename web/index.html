@@ -67,9 +67,12 @@
       <span class="muted" id="sync-method"></span>
       <span class="spacer"></span>
       <button id="sync-brake" title="Jump to a hard braking point — the easiest frame to judge">Next braking ⤓</button>
-      <input id="sync-slider" type="range" min="-5" max="5" step="0.02" value="0"
-             title="Shift this camera against the telemetry, in seconds">
-      <code id="sync-value">+0.00 s</code>
+      <button id="sync-back" title="Pull the picture forward by 5 ms">−5 ms</button>
+      <input id="sync-slider" type="range" min="-5" max="5" step="0.005" value="0"
+             title="Shift this camera against the telemetry. Minus pulls the picture
+                    forward, plus holds it back. Arrow keys step 5 ms at a time.">
+      <button id="sync-forward" title="Hold the picture back by 5 ms">+5 ms</button>
+      <code id="sync-value">0 ms</code>
       <span class="muted" id="sync-saved"></span>
       <button id="sync-later">Later</button>
       <button id="sync-confirm">Looks right</button>

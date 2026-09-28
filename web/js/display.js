@@ -123,7 +123,20 @@ const Display = (function () {
     return array[Math.min(Math.max(index, 0), array.length - 1)];
   }
 
-  return { LEAN_ENTER_DEG, LEAN_EXIT_DEG, SCORE_ENTER, SCORE_EXIT, LEAN_SMOOTH_S,
+  /**
+   * A sync correction, in the unit a person would say it in.
+   *
+   * Milliseconds below a second, because that is the range the correction is judged in -
+   * a frame at 60 fps is 17 ms, and "+0.01 s" reads as nothing at all.
+   */
+  function offset(seconds) {
+    const sign = seconds > 0 ? '+' : (seconds < 0 ? '-' : '');
+    const size = Math.abs(seconds);
+    if (size < 1) return `${sign}${Math.round(size * 1000)} ms`;
+    return `${sign}${size.toFixed(3)} s`;
+  }
+
+  return { offset, LEAN_ENTER_DEG, LEAN_EXIT_DEG, SCORE_ENTER, SCORE_EXIT, LEAN_SMOOTH_S,
            sides, stickyRound, smooth, lean, scoreSide, at };
 }());
 

@@ -139,3 +139,12 @@ test('smoothing with a window under one sample is a no-op', () => {
   const values = [1, 5, 2, 8];
   assert.deepStrictEqual([...Display.smooth(values, 25, 0)], values);
 });
+
+test('a sync correction reads in the unit a person would say it in', () => {
+  assert.strictEqual(Display.offset(0), '0 ms');
+  assert.strictEqual(Display.offset(0.005), '+5 ms');
+  assert.strictEqual(Display.offset(-0.12), '-120 ms');
+  assert.strictEqual(Display.offset(0.999), '+999 ms');
+  assert.strictEqual(Display.offset(1.25), '+1.250 s');
+  assert.strictEqual(Display.offset(-3), '-3.000 s');
+});
