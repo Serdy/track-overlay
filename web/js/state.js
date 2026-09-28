@@ -716,6 +716,16 @@
    * Driven by `syncDirty` rather than by the timers: a save that failed has no timer left,
    * and dropping it there is how a refused export turned into a silent one on the retry.
    */
+  /** Moves the correction by one small step, staying inside the slider's range. */
+  function nudgeSync(by) {
+    const clip = currentClip();
+    const slider = dom['sync-slider'];
+    const now = clip.offset_s - autoOffset(clip);
+    const next = Math.min(Number(slider.max),
+                          Math.max(Number(slider.min), Number((now + by).toFixed(4))));
+    setManual(next);
+  }
+
   async function flushSync() {
     for (const timer of syncTimers.values()) clearTimeout(timer);
     syncTimers.clear();
