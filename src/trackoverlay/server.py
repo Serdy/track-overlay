@@ -537,9 +537,18 @@ class Handler(BaseHTTPRequestHandler):
                                "use the build command instead")
         done = subprocess.run(["osascript", "-e", CHOOSE_SCRIPT],
                               capture_output=True, text=True)
-        if done.returncode != 0 or "User canceled" in done.stderr:
-            # Cancelling is an ordinary outcome, not a failure.
-            return self._json({"files": [], "cancelled": True})
+        if done.returncode != 0:
+            detail = (done.stderr or "").strip()
+            # Cancelling is an ordinary outcome, and it is the *only* one that counts as
+            # one. Treating every failure as a cancel is why refused permission looked
+            # like a dead button: the dialog never opened and the page said nothing.
+            if "-128" in detail or "User canceled" in detail:
+                return self._json({"files": [], "cancelled": True})
+            return self._error(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                f"the file dialog would not open: {detail or 'osascript failed'} — grant "
+                f"the terminal Automation access to System Events in System Settings, or "
+                f"put the files in the project folder instead")
 
         files = [line for line in done.stdout.splitlines() if line.strip()]
         usable = [f for f in files if Path(f).suffix.lower() in READABLE]

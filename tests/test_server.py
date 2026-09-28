@@ -501,3 +501,29 @@ def test_a_render_uses_the_layout_it_was_sent(live):
         time.sleep(0.1)
     # The sent layout names a camera the session does not have; the file on disk does not.
     assert "cam_nowhere" in state["message"]
+
+
+def _fake_osascript(monkeypatch, returncode, stderr):
+    monkeypatch.setattr(server.sys, "platform", "darwin")
+    monkeypatch.setattr(server.subprocess, "run",
+                        lambda *a, **k: SimpleNamespace(returncode=returncode,
+                                                        stdout="", stderr=stderr))
+
+
+def test_cancelling_the_file_dialog_is_not_an_error(live, monkeypatch):
+    _fake_osascript(monkeypatch, 1, "execution error: User canceled. (-128)")
+    assert json.load(post(live.base + "/api/choose"))["cancelled"] is True
+
+
+def test_a_dialog_that_cannot_open_says_so(live, monkeypatch):
+    """Refused Automation permission used to look exactly like pressing Cancel: the
+    button did nothing and the page said nothing."""
+    _fake_osascript(monkeypatch, 1,
+                    "execution error: Not authorized to send Apple events to System "
+                    "Events. (-1743)")
+    with pytest.raises(urllib.error.HTTPError) as err:
+        post(live.base + "/api/choose")
+
+    assert err.value.code == 500
+    message = json.load(err.value)["error"]
+    assert "-1743" in message and "Automation" in message
