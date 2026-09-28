@@ -12,6 +12,8 @@ out/
 *.THM
 # Everybody's own track days stay out; one sample project is committed, because the
 # telemetry is small and the tests and CI build a real session from it.
+data/*.csv
+data/*.vbo
 data/*/*.csv
 data/*/*.vbo
 !data/slovakia-ring-2026-09-12/*.csv
