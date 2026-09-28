@@ -170,12 +170,10 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
 
     report(0.0, "reading telemetry")
     if not racebox_files:
-        raise SessionError("no RaceBox export was given")
+        raise SessionError("no telemetry export was given (.csv or .vbo)")
 
     csvs = [p for p in racebox_files if p.suffix.lower() == ".csv"]
     vbos = [p for p in racebox_files if p.suffix.lower() == ".vbo"]
-    if not csvs:
-        raise SessionError("at least one RaceBox CSV is required — a VBO alone will not do")
 
     parts = []
     for n, path in enumerate(csvs + vbos):

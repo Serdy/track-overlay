@@ -132,6 +132,11 @@ with lean angle rather than adding it. Export the session both ways and keep bot
 `merge` folds them into one set of channels. The VBO is optional — it carries a `heading`
 column the CSV lacks, which makes the lean angle slightly cleaner.
 
+**A VBO on its own is enough**, which is what makes other loggers usable: RaceChrono
+exports one under *Performance/Circuit Tools (.vbo)*. Everything on screen is derived from
+position, heading and speed — the lean angle from the trajectory, braking from the speed —
+so nothing is missing without the accelerometer columns.
+
 If the GoPro clock has drifted and the file dates are nonsense, fix them from satellite
 time:
 

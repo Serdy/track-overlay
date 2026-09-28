@@ -248,7 +248,7 @@ def test_building_needs_telemetry(live):
     with pytest.raises(urllib.error.HTTPError) as err:
         post(live.url("/api/build"))
     assert err.value.code == 400
-    assert "RaceBox" in json.load(err.value)["error"]
+    assert "telemetry" in json.load(err.value)["error"]
 
 
 def test_adding_a_format_it_cannot_read_is_refused(live):

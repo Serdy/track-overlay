@@ -37,11 +37,13 @@ const Picker = (function () {
    *
    * Video alone is not enough - there would be nothing to draw - while telemetry alone
    * is perfectly usable, and produces a session the editor can show without a picture.
+   * Either format will do: a VBO carries position and heading, and everything else drawn
+   * is computed from those.
    */
   function missing(paths) {
     const names = paths.map((p) => p.split('/').pop());
     if (!names.length) return 'nothing chosen yet';
-    if (!names.some(isTelemetry)) return 'a RaceBox export (.csv) is required';
+    if (!names.some(isTelemetry)) return 'a telemetry export is required (.csv or .vbo)';
     return null;
   }
 

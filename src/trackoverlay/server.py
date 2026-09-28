@@ -576,7 +576,7 @@ class Handler(BaseHTTPRequestHandler):
         videos = [p for p in found if p.suffix.lower() in (".mp4", ".mov")]
         if not telemetry:
             return self._error(HTTPStatus.BAD_REQUEST,
-                               "this project has no RaceBox export to build from")
+                               "this project has no telemetry to build from — add a RaceBox CSV or a VBO")
 
         with _BUILD_LOCK:
             running = JOBS.get(_BUILDS.get(project.name, ""))

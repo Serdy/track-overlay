@@ -18,7 +18,8 @@ test('a file with no extension confuses nothing', () => {
 test('telemetry is required, video is not', () => {
   // Telemetry alone still gives a session the editor can show; video alone draws nothing.
   assert.strictEqual(Picker.missing(['/x/a.csv']), null);
-  assert.match(Picker.missing(['/x/GH013429.MP4']), /RaceBox export/);
+  assert.strictEqual(Picker.missing(['/x/a.vbo']), null);   // RaceChrono exports these
+  assert.match(Picker.missing(['/x/GH013429.MP4']), /telemetry export is required/);
   assert.match(Picker.missing([]), /nothing chosen/);
 });
 

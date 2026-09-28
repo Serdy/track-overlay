@@ -65,13 +65,24 @@ def test_write_produces_valid_json(session, tmp_path):
 
 
 def test_requires_racebox_files():
-    with pytest.raises(SessionError, match="no RaceBox export"):
+    with pytest.raises(SessionError, match="no telemetry export"):
         build_session([], [])
 
 
-def test_vbo_alone_is_not_enough():
-    with pytest.raises(SessionError, match="VBO alone"):
-        build_session([VBO], [])
+def test_a_vbo_on_its_own_builds_a_session():
+    """Everything drawn comes from GPS: the lean angle is computed from the trajectory
+    and braking from the speed, so a file with position and heading is enough. It is also
+    what RaceChrono exports, which is the only telemetry some people have."""
+    session = build_session([VBO], [], track="Slovakia Ring")
+
+    assert set(session.telemetry.channels) == {"lat", "lon", "speed", "lean", "accel", "dist"}
+    assert len(session.laps) == 8
+    assert min(lap.duration_s for lap in session.laps) == pytest.approx(160.349, abs=0.3)
+
+
+def test_no_telemetry_at_all_is_still_refused():
+    with pytest.raises(SessionError, match="no telemetry export"):
+        build_session([], [])
 
 
 def test_cli_build_without_video(tmp_path, capsys):

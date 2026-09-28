@@ -146,13 +146,24 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
         raise RaceBoxError(f"{path.name}: no [column names] and [data] sections")
     if day_utc is None:
         if started is None:
-            raise RaceBoxError(f"{path.name}: no date found, pass day_utc")
+            # VBO carries a time of day and no date, and the line that usually supplies it
+            # is RaceBox's own - other loggers write their comments differently. The file's
+            # own date is the best guess left, and a wrong guess is not silent: the video
+            # then fails to correlate and the sync panel says so.
+            started = _dt.datetime.fromtimestamp(
+                path.stat().st_mtime, _dt.timezone.utc).date()
         day_utc = _dt.datetime.combine(
             started, _dt.time(), tzinfo=_dt.timezone.utc).timestamp()
 
     index = {name: i for i, name in enumerate(names)}
     if "time" not in index:
         raise RaceBoxError(f"{path.name}: [column names] has no time column")
+
+    # RaceBox writes lat/lng; the VBOX format RaceChrono and RaceLogic follow says
+    # lat/long. Same numbers either way, so the spelling is just a lookup.
+    for spelling, canonical in (("latitude", "lat"), ("long", "lng"), ("longitude", "lng")):
+        if spelling in index and canonical not in index:
+            index[canonical] = index[spelling]
 
     times = [day_utc + _parse_vbo_time(r[index["time"]]) for r in rows]
     columns: dict[str, list[float]] = {}
