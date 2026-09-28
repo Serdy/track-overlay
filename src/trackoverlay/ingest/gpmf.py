@@ -133,13 +133,28 @@ def _numbers(entry: tuple[str, int, int, bytes]) -> list[tuple]:
     return [struct.unpack_from('>' + fmt * per, payload, i * size) for i in range(count)]
 
 
-def _gpsu_to_epoch(payload: bytes) -> float:
+def _gpsu_to_epoch(payload: bytes) -> float | None:
+    """The satellite stamp as epoch seconds, or None when the block does not carry one.
+
+    A block recorded before the receiver knows the time holds whatever was in the field —
+    a card off a real track day carried '286000014309', which is month sixty. That has to
+    be something the caller can skip: one rubbish block used to stop the whole file, and
+    with it every other block that was perfectly good.
+    """
     text = payload.decode('latin1').strip('\x00').strip()
     if len(text) < 12:
-        raise GpmfError(f"GPSU stamp too short: {text!r}")
-    stamp = _dt.datetime.strptime(text[:12], "%y%m%d%H%M%S")
-    fraction = float(text[12:] or 0)
+        return None
+    try:
+        stamp = _dt.datetime.strptime(text[:12], "%y%m%d%H%M%S")
+        fraction = float(text[12:] or 0)
+    except ValueError:
+        return None
     return stamp.replace(tzinfo=_dt.timezone.utc).timestamp() + fraction
+
+
+def _fix_of(block: dict) -> int:
+    """Fix quality, and zero for a block that does not say — which counts as no fix."""
+    return _numbers(block['GPSF'])[0][0] if 'GPSF' in block else 0
 
 
 def _gps_blocks(buf: bytes) -> list[dict]:
@@ -151,12 +166,18 @@ def parse_window(buf: bytes) -> Window:
     blocks = _gps_blocks(buf)
     if not blocks:
         raise GpmfError("the GPMF stream contains no GPS blocks")
-    fixed = sum(1 for b in blocks if _numbers(b['GPSF'])[0][0] >= 2)
+    fixed = [b for b in blocks if _fix_of(b) >= 2]
+    # Measured from the blocks that had a fix when there are any: a stamp written before
+    # the receiver had the time is not the moment the recording started.
+    timed = [t for t in (_gpsu_to_epoch(b['GPSU'][3]) for b in (fixed or blocks))
+             if t is not None]
+    if not timed:
+        raise GpmfError("no GPS block carries a usable satellite stamp")
     return Window(
-        start_utc=_gpsu_to_epoch(blocks[0]['GPSU'][3]),
-        end_utc=_gpsu_to_epoch(blocks[-1]['GPSU'][3]),
+        start_utc=timed[0],
+        end_utc=timed[-1],
         blocks=len(blocks),
-        fixed_blocks=fixed,
+        fixed_blocks=len(fixed),
     )
 
 
@@ -175,15 +196,23 @@ def parse_gps(buf: bytes) -> list[GpsSample]:
     samples: list[GpsSample] = []
 
     for i, block in enumerate(blocks):
-        fix = _numbers(block['GPSF'])[0][0] if 'GPSF' in block else 0
-        if fix < 2:
+        # A block with no fix, or none the receiver could stamp, has nothing to place in
+        # time - its coordinates would land wherever the previous block happened to end.
+        if _fix_of(block) < 2 or stamps[i] is None:
             continue
         scale = [v[0] for v in _numbers(block['SCAL'])] if 'SCAL' in block else [1] * 5
         if len(scale) == 1:
             scale = scale * 5
         rows = _numbers(block['GPS5'])
+        if not rows:
+            continue
+        fix = _fix_of(block)
         begin = stamps[i]
-        end = stamps[i + 1] if i + 1 < len(stamps) else begin + _FALLBACK_STEP
+        following = stamps[i + 1] if i + 1 < len(stamps) else None
+        # Only the very next stamp sets the pace. Reaching further for one would stretch a
+        # single second of samples across every block in between.
+        end = following if following is not None and following > begin \
+            else begin + _FALLBACK_STEP
         step = (end - begin) / len(rows)
         for j, row in enumerate(rows):
             samples.append(GpsSample(

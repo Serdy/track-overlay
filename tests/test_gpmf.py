@@ -76,10 +76,54 @@ def test_garbage_buffer_does_not_crash():
     assert gpmf.parse_streams(b"\x00" * 64) == []
 
 
-def test_short_gpsu_raises():
-    stream = {"GPSU": ("U", 16, 1, b"2609"), "GPS5": ("l", 20, 1, b"\x00" * 20)}
-    with pytest.raises(gpmf.GpmfError, match="too short"):
-        gpmf._gpsu_to_epoch(stream["GPSU"][3])
+@pytest.mark.parametrize("stamp", [
+    b"2609",                    # truncated
+    b"286000014309.123",        # month sixty, straight off a card from a track day
+    b"000000000000.000",        # the field before the receiver has the time
+    b"26091a122935.340",        # a letter where a digit belongs
+])
+def test_an_unusable_satellite_stamp_is_skipped_not_fatal(stamp):
+    """One rubbish block used to stop the whole file, and every good block with it."""
+    assert gpmf._gpsu_to_epoch(stamp) is None
+
+
+def test_a_good_stamp_still_reads(gpmd_head):
+    blocks = [s for s in gpmf.parse_streams(gpmd_head) if "GPSU" in s]
+    assert gpmf._gpsu_to_epoch(blocks[0]["GPSU"][3]) == pytest.approx(FIRST_STAMP, abs=0.01)
+
+
+def _with_broken_stamp(buf: bytes, which: int = 0) -> bytes:
+    """The real stream with one GPSU payload overwritten by the rubbish a card wrote."""
+    patched = bytearray(buf)
+    found = 0
+    at = patched.find(b"2609")
+    while at != -1:
+        if found == which:
+            patched[at:at + 12] = b"286000014309"
+            return bytes(patched)
+        found += 1
+        at = patched.find(b"2609", at + 1)
+    raise AssertionError("no stamp to break in this fixture")
+
+
+def test_one_broken_stamp_does_not_lose_the_other_blocks(gpmd_head):
+    whole = gpmf.parse_gps(gpmd_head)
+    patched = gpmf.parse_gps(_with_broken_stamp(gpmd_head))
+
+    assert patched, "the file still has usable blocks"
+    # Exactly one block's worth of samples goes, and the rest keep their own times.
+    assert 0 < len(whole) - len(patched) <= 20
+    assert patched[-1].t_utc == pytest.approx(whole[-1].t_utc, abs=0.01)
+
+
+def test_a_window_ignores_a_broken_stamp(gpmd_head):
+    """Breaking the first stamp costs that block, not the recording window."""
+    whole = gpmf.parse_window(gpmd_head)
+    patched = gpmf.parse_window(_with_broken_stamp(gpmd_head))
+
+    assert patched.blocks == whole.blocks == 30
+    assert patched.end_utc == pytest.approx(whole.end_utc, abs=0.01)
+    assert 0 < patched.start_utc - whole.start_utc < 3   # the next stamp along
 
 
 def test_missing_gpmd_stream_raises(tmp_path):
@@ -100,3 +144,17 @@ def test_full_chunk_integration():
     assert window.fixed_blocks == 707
     assert window.start_utc == pytest.approx(FIRST_STAMP, abs=0.01)
     assert window.duration_s == pytest.approx(706.9, abs=1.0)
+
+
+def test_a_file_with_no_usable_stamp_reports_rather_than_crashes(gpmd_head):
+    """The tools catch GpmfError and move to the next file; a ValueError from strptime
+    escaped that and took the whole run down."""
+    patched = bytearray(gpmd_head)
+    at = patched.find(b"2609")
+    while at != -1:
+        patched[at:at + 12] = b"286000014309"
+        at = patched.find(b"2609", at + 1)
+
+    with pytest.raises(gpmf.GpmfError, match="usable satellite stamp"):
+        gpmf.parse_window(bytes(patched))
+    assert gpmf.parse_gps(bytes(patched)) == []
