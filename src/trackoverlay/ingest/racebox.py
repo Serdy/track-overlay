@@ -190,7 +190,16 @@ def read_vbo(path: Path, *, day_utc: float | None = None) -> RaceBoxData:
         if spelling in index and canonical not in index:
             index[canonical] = index[spelling]
 
-    times = [day_utc + _parse_vbo_time(r[index["time"]]) for r in rows]
+    # A VBO time is a time of day, so a session running through midnight UTC starts
+    # counting from zero again and every sample after it would land a day earlier. Midnight
+    # UTC is mid-morning in Japan and Australia, where that is an ordinary track day.
+    times, day, previous = [], 0.0, None
+    for row in rows:
+        value = _parse_vbo_time(row[index["time"]])
+        if previous is not None and value < previous - 43200:
+            day += 86400.0
+        previous = value
+        times.append(day_utc + day + value)
     columns: dict[str, list[float]] = {}
     if "lat" in index:
         columns["lat"] = [_parse_vbo_coord(r[index["lat"]]) for r in rows]

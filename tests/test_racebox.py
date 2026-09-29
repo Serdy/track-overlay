@@ -201,3 +201,20 @@ def test_an_accelerometer_that_was_never_connected_is_not_a_channel(rc_vbo):
     data = racebox.read_vbo(rc_vbo)
 
     assert any(data.columns["g_long"])
+
+
+def test_a_vbo_that_runs_through_midnight_stays_in_order(tmp_path):
+    """VBO time is a time of day. Midnight UTC is mid-morning in Japan, and without this
+    every sample after it lands a day earlier - monotonic time is what everything downstream
+    assumes."""
+    vbo = tmp_path / "night.vbo"
+    vbo.write_text("File created on 12/09/2026 at 23:59:58\n\n"
+                   "[column names]\ntime lat long velocity\n\n[data]\n"
+                   "235958.00 +2883.30 -01054.28 100.0\n"
+                   "235959.00 +2883.30 -01054.28 100.0\n"
+                   "000000.00 +2883.30 -01054.28 100.0\n"
+                   "000001.00 +2883.30 -01054.28 100.0\n")
+    data = racebox.read_vbo(vbo)
+
+    assert data.times == sorted(data.times)
+    assert data.times[-1] - data.times[0] == pytest.approx(3.0)
