@@ -7,7 +7,7 @@ Burns telemetry from a **RaceBox** logger into onboard **GoPro** footage and com
 finished MP4. Several cameras at once, picture-in-picture, swappable mid-session. Runs
 locally — no cloud, no phone, no upload.
 
-![The editor, mid-corner](docs/editor.png)
+![The editor, mid-corner](docs/editor.webp)
 
 ## Why
 
