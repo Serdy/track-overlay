@@ -333,3 +333,25 @@ test('an angle past the end of the fan does not run off it', () => {
   const arc = ctx.calls.find((c) => c.name === 'arc');
   assert.ok(arc.args[4] - arc.args[3] <= Math.PI / 3 + 1e-9);
 });
+
+test('the trail is green where time is gained and red where it is lost', () => {
+  const map = Widgets.get('map');
+  const green = map._trailColor(map.FULL_GAIN);
+  const red = map._trailColor(-map.FULL_GAIN);
+
+  const rgb = (s) => s.match(/\d+/g).map(Number);
+  assert.ok(rgb(green)[1] > rgb(green)[0], `expected green, got ${green}`);
+  assert.ok(rgb(red)[0] > rgb(red)[1], `expected red, got ${red}`);
+});
+
+test('a trail with nothing to compare against stays neutral', () => {
+  const map = Widgets.get('map');
+  const rgb = (s) => s.match(/\d+/g).map(Number);
+
+  // Before the first lap is finished, and on a stretch too close to the best to call.
+  for (const gain of [null, undefined, 0, 0.005, -0.005]) {
+    const [r, g, b] = rgb(map._trailColor(gain));
+    assert.ok(Math.abs(r - g) < 6 && Math.abs(g - b) < 6,
+              `expected neutral for ${gain}, got ${r},${g},${b}`);
+  }
+});

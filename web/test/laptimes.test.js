@@ -194,3 +194,40 @@ test('lap list times carry thousandths', () => {
   assert.strictEqual(LapTimes.format(147.795, 3), '2:27.795');
   assert.strictEqual(LapTimes.format(23.008, 3), '23.008');
 });
+
+test('a slower lap gives time away, a quicker one takes it back', () => {
+  // Lap 1 is the reference at 10 m/s; lap 2 crawls at 8, so every second on it loses.
+  const s = session({ speeds: [10, 8, 12] });
+  const model = LapTimes.build(s);
+
+  const losing = LapTimes.gainAt(model, s, s.laps[1].t_start + 20);
+  const gaining = LapTimes.gainAt(model, s, s.laps[2].t_start + 20);
+
+  assert.ok(losing < -0.05, `expected a loss, got ${losing}`);
+  assert.ok(gaining > 0.05, `expected a gain, got ${gaining}`);
+});
+
+test('there is nothing to colour before the window opens or between laps', () => {
+  const s = session();
+  const model = LapTimes.build(s);
+
+  // On the opening lap there is no reference at all.
+  assert.strictEqual(LapTimes.gainAt(model, s, s.laps[0].t_start + 20), null);
+  // Just after a lap starts the second behind it belongs to the previous one.
+  assert.strictEqual(LapTimes.gainAt(model, s, s.laps[1].t_start + 0.5), null);
+  // And past the flag there is no lap being driven.
+  assert.strictEqual(LapTimes.gainAt(model, s, s.laps[2].t_end + 5), null);
+});
+
+test('the gain is the same whenever the frame asks for it', () => {
+  // The preview and the render draw through the same function; a value that moved
+  // between calls would make the finished file differ from what was arranged.
+  const s = session({ speeds: [10, 8, 12] });
+  const model = LapTimes.build(s);
+  // Both moments inside one cell of the grid, deliberately: the value is meant to step
+  // from cell to cell, not to drift with the frame that asked for it.
+  const cell = Math.floor((s.laps[1].t_start + 20) / LapTimes.STEP) * LapTimes.STEP;
+
+  const first = LapTimes.gainAt(model, s, cell + 0.01);
+  assert.strictEqual(LapTimes.gainAt(model, s, cell + LapTimes.STEP - 0.01), first);
+});

@@ -29,6 +29,10 @@ const LapTimes = (function () {
   const SMOOTH_WINDOW = 0.5;
   const SMOOTH_SAMPLES = 5;
 
+  // How far back the trail colour looks. Shorter than a second is noise; longer smears
+  // what happened in a corner into the straight after it.
+  const GAIN_WINDOW = 1.0;
+
   /**
    * Prepares the lookups once for a whole session.
    *
@@ -163,6 +167,30 @@ const LapTimes = (function () {
   }
 
   /**
+   * Seconds taken out of the reference lap over the last second, at this moment.
+   *
+   * Positive means gaining. This is the *rate*, not the delta: the delta says how far up
+   * the lap is overall, which stays much the same for a corner at a time, while this says
+   * where the time is actually changing hands. That is what makes a corner on the map read
+   * differently from the one before it.
+   *
+   * Sampled on the same grid as the delta and derived from session time alone, so the
+   * preview and the render colour a frame identically.
+   */
+  function gainAt(model, session, time) {
+    const lap = model.laps.find((l) => time >= l.t_start && time < l.t_end);
+    if (!lap) return null;
+    const curve = bestBy(model, time).curve;
+    if (!curve) return null;
+
+    const at = Math.floor(time / STEP) * STEP;
+    if (at - GAIN_WINDOW < lap.t_start) return null;   // the window is not open yet
+    const now = rawDelta(model, session, lap, curve, at);
+    const before = rawDelta(model, session, lap, curve, at - GAIN_WINDOW);
+    return (now === null || before === null) ? null : before - now;
+  }
+
+  /**
    * The lap list as a board shows it: the lap being driven on top, finished laps under it.
    *
    * Only laps finished by now appear, for the same reason the best lap is the best so
@@ -204,8 +232,8 @@ const LapTimes = (function () {
     return `${rounded > 0 ? '+' : (rounded < 0 ? '-' : '')}${Math.abs(rounded).toFixed(digits)}`;
   }
 
-  return { STEP, build, curveFor, timeAt, bestBy, stateAt, boardAt, format,
-           formatDelta };
+  return { STEP, GAIN_WINDOW, build, curveFor, timeAt, bestBy, stateAt, gainAt, boardAt,
+           format, formatDelta };
 }());
 
 if (typeof module !== 'undefined' && module.exports) module.exports = LapTimes;

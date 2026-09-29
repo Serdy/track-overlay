@@ -26,7 +26,8 @@ you set up once and reuse for every session of the day.
 - Finds the start/finish line and splits the session into laps, with no external track
   database
 - Draws seven widgets: speed, lean angle as a bar or as a fan, acceleration/braking, a map
-  of the circuit built from your own GPS trace, a lap board (best, previous and current
+  of the circuit built from your own GPS trace, its trail green where the lap is taking
+  time out of your best so far and red where it is giving it back, a lap board (best, previous and current
   with a live delta) and a lap list. "Best" means the best lap finished by that point in the session, so both
   read the way they would have on the bike rather than knowing the session in advance
 - Composes any number of cameras with picture-in-picture, lets you swap them over a

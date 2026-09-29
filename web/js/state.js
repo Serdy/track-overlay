@@ -1473,7 +1473,12 @@
     for (let t = Math.max(0, time - widget.TRAIL_S); t <= time; t += step) {
       const lat = SessionModel.sampleAt(session, 'lat', t);
       const lon = SessionModel.sampleAt(session, 'lon', t);
-      if (lat !== null && lon !== null) points.push([lat, lon]);
+      // The third value colours the segment: where this lap is taking time out of the
+      // best one so far, and where it is giving it away. Null until there is a lap to
+      // compare against.
+      if (lat !== null && lon !== null) {
+        points.push([lat, lon, LapTimes.gainAt(lapModel, session, t)]);
+      }
     }
     return points;
   }

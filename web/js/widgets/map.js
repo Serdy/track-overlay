@@ -13,6 +13,17 @@
   const PAD = 0.08;              // padding inside the widget, as a fraction of its shorter side
   const TRAIL_S = 6;             // how many seconds of trail follow the dot
 
+  // Where the trail reaches full colour, in seconds gained per second. Measured over the
+  // eight laps in `data/`: half the samples sit under 0.04 s and nine in ten under 0.17,
+  // so this grades ordinary riding and saturates only where a corner really went
+  // differently. Under DEAD_GAIN the difference is noise and the trail stays neutral.
+  const FULL_GAIN = 0.15;
+  const DEAD_GAIN = 0.02;
+
+  const NEUTRAL = [235, 235, 235];
+  const GAINING = [61, 208, 122];
+  const LOSING = [226, 72, 61];
+
   /** Bounding box of the given lat/lon lines. */
   function bounds(lines) {
     let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
@@ -54,6 +65,20 @@
       // Screen coordinates grow downwards, latitude grows upwards — so flip.
       offsetY + (b.maxLat - lat) * scale,
     ];
+  }
+
+  /**
+   * The trail colour for one moment: green where time is coming out of the best lap so
+   * far, red where it is going the other way, neutral where there is nothing to say -
+   * before the first lap is finished, or on a stretch matching it too closely to call.
+   */
+  function trailColor(gain) {
+    if (gain === null || gain === undefined) return `rgb(${NEUTRAL.join(',')})`;
+    const span = FULL_GAIN - DEAD_GAIN;
+    const strength = Math.min(1, Math.max(0, (Math.abs(gain) - DEAD_GAIN) / span));
+    const target = gain > 0 ? GAINING : LOSING;
+    const mixed = NEUTRAL.map((from, i) => Math.round(from + (target[i] - from) * strength));
+    return `rgb(${mixed.join(',')})`;
   }
 
   function strokeLine(ctx, points, color, width) {
@@ -111,9 +136,20 @@
       strokeLine(ctx, prepared.left, 'rgba(255,255,255,0.30)', Math.max(1, box.h * 0.006));
       strokeLine(ctx, prepared.right, 'rgba(255,255,255,0.30)', Math.max(1, box.h * 0.006));
 
+      // Stroked segment by segment rather than as one line: the whole point is that one
+      // corner reads differently from the next. Six seconds of trail is thirty segments.
       if (data.trail && data.trail.length > 1) {
-        strokeLine(ctx, data.trail.map(([lat, lon]) => prepared.project(lat, lon)),
-                   '#e2483d', Math.max(1.5, box.h * 0.012));
+        const points = data.trail.map(([lat, lon]) => prepared.project(lat, lon));
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(1.5, box.h * 0.012);
+        for (let i = 1; i < points.length; i += 1) {
+          ctx.strokeStyle = trailColor(data.trail[i][2]);
+          ctx.beginPath();
+          ctx.moveTo(points[i - 1][0], points[i - 1][1]);
+          ctx.lineTo(points[i][0], points[i][1]);
+          ctx.stroke();
+        }
       }
 
       if (data.lat !== null && data.lat !== undefined &&
@@ -131,6 +167,8 @@
     },
 
     TRAIL_S,
+    FULL_GAIN,
+    _trailColor: trailColor,
     _bounds: bounds,
     _makeProjection: makeProjection,
   });
