@@ -14,10 +14,12 @@
   const TRAIL_S = 6;             // how many seconds of trail follow the dot
 
   // Where the trail reaches full colour, in seconds gained per second. Measured over the
-  // eight laps in `data/`: half the samples sit under 0.04 s and nine in ten under 0.17,
-  // so this grades ordinary riding and saturates only where a corner really went
-  // differently. Under DEAD_GAIN the difference is noise and the trail stays neutral.
-  const FULL_GAIN = 0.15;
+  // eight laps in `data/`: half the samples sit under 0.04 s, three quarters under 0.08.
+  // Scaled linearly from there the trail comes out white for most of a lap - which is
+  // honest and useless, since the point is to be read at a glance on a small map. The
+  // square root lifts ordinary riding into visible colour and still leaves the strongest
+  // quarter to saturate. Under DEAD_GAIN the difference is noise and the trail is neutral.
+  const FULL_GAIN = 0.10;
   const DEAD_GAIN = 0.02;
 
   const NEUTRAL = [235, 235, 235];
@@ -75,7 +77,8 @@
   function trailColor(gain) {
     if (gain === null || gain === undefined) return `rgb(${NEUTRAL.join(',')})`;
     const span = FULL_GAIN - DEAD_GAIN;
-    const strength = Math.min(1, Math.max(0, (Math.abs(gain) - DEAD_GAIN) / span));
+    const share = Math.min(1, Math.max(0, (Math.abs(gain) - DEAD_GAIN) / span));
+    const strength = Math.sqrt(share);
     const target = gain > 0 ? GAINING : LOSING;
     const mixed = NEUTRAL.map((from, i) => Math.round(from + (target[i] - from) * strength));
     return `rgb(${mixed.join(',')})`;
