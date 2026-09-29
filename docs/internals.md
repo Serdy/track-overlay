@@ -75,6 +75,17 @@ did seven times the work for a lap exported from sixteen minutes in — and the 
 sat still throughout, because output time does not begin to move until the trim starts
 producing frames.
 
+**Time in a VBO.** The format writes a time of day and no date, which makes a VBO alone
+ambiguous by 24 hours - and telemetry dated wrong is the worst failure this tool has,
+because correlation then finds nothing, falls back to raw UTC, and puts the whole gap into
+`offset_s`. Three things fence it off. The date comes from the `File created on` line every
+writer of the format puts first, in UTC and on the same clock as the data, with the file's
+own mtime left as the last resort. A session running through midnight UTC would start
+counting from zero again, so a backwards step of more than twelve hours adds a day -
+midnight UTC is mid-morning in Japan and Australia, where that is an ordinary track day.
+And footage whose satellites never saw the same hour as the logger stops the build by name
+instead of being aligned to nothing.
+
 **Transparency.** WebCodecs advertises an `alpha: 'keep'` option that no browser tested
 here will actually encode; VP9, VP8, H.264 and AV1 all report support only with alpha
 off. So the overlay is written as a frame of double height, colour on top and a greyscale

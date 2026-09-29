@@ -20,7 +20,8 @@ you set up once and reuse for every session of the day.
 
 - Reads the **GPMF** telemetry stream GoPro embeds in the MP4 — satellite time, position,
   speed, fix quality
-- Reads the **RaceBox** CSV and VBO exports at 25 Hz
+- Reads the **RaceBox** CSV and VBO exports at 25 Hz, and the plain **VBO** any other
+  logger writes — RaceChrono, RaceLogic — which is enough on its own
 - Aligns the two on one timeline, to better than a frame at 60 fps
 - Finds the start/finish line and splits the session into laps, with no external track
   database
@@ -132,11 +133,27 @@ with lean angle rather than adding it. Export the session both ways and keep bot
 `merge` folds them into one set of channels. The VBO is optional — it carries a `heading`
 column the CSV lacks, which makes the lean angle slightly cleaner.
 
-**A VBO on its own is enough**, which is what makes other loggers usable: RaceChrono
-exports one under *Performance/Circuit Tools (.vbo)*, scope *Whole session*. Everything on
-screen is derived from position, heading and speed — the lean angle from the trajectory,
-braking from the speed — so nothing is missing without the accelerometer columns. Against
-RaceChrono's own lean angle the computed one tracks to within two degrees.
+#### A VBO on its own is enough
+
+That is what makes loggers other than RaceBox usable. In **RaceChrono**: *Export session*
+→ *Performance/Circuit Tools (.vbo)*, scope *Whole session*. Drop the file into the
+project and build — no CSV, no second export, nothing else to set.
+
+Everything on screen is derived from position, heading and speed: the lean angle from the
+trajectory, braking from the speed. So the accelerometer columns are not missed, and
+neither are the channels a phone does not have. Checked against a 22-minute RaceChrono
+export from Slovakia Ring: the lap times come out within 0.11 s of RaceChrono's own, and
+the computed lean angle within 1.8° of the one it computes itself.
+
+RaceChrono's bigger *CSV v3* export carries the same channels interpolated onto a 233 Hz
+grid — 68 MB against 3 MB for the VBO, for nothing that reaches the screen. The VBO is the
+one to use.
+
+One thing a VBO does not carry is the date: the format writes a time of day and nothing
+else. The date is read from the `File created on` line at the top of the file, and if a
+file has lost that line, from the file's own date — a guess, but not a silent one. Footage
+and telemetry more than an hour apart stop the build with both dates named, rather than
+synchronising to a black screen.
 
 If the GoPro clock has drifted and the file dates are nonsense, fix them from satellite
 time:
