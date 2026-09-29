@@ -104,6 +104,35 @@ def _build_telemetry(data: racebox.RaceBoxData) -> T.Telemetry:
     return tel
 
 
+# Further apart than any clock error: a camera minutes off the logger is ordinary, and a
+# clip filmed in the pit lane before the session may sit outside it altogether.
+ANOTHER_DAY_S = 3600.0
+
+
+def _refuse_if_another_day(clip_id: str, samples: list[gpmf.GpsSample],
+                           tel: T.Telemetry) -> None:
+    """Footage whose satellites never saw the same hour as the logger cannot be synced.
+
+    Correlation finds nothing and falls back to raw UTC, so the offset becomes the whole
+    gap - days of it - and the render is a black screen with an overlay. A VBO carries a
+    time of day and no date, which is exactly how a session ends up dated wrong.
+    """
+    stamps = [s.t_utc for s in samples]
+    gap = max(min(stamps) - tel.times[-1], tel.times[0] - max(stamps))
+    if gap < ANOTHER_DAY_S:
+        return
+
+    def day(t: float) -> str:
+        return _dt.datetime.fromtimestamp(t, _dt.timezone.utc).strftime("%d %b %Y %H:%M UTC")
+
+    raise SessionError(
+        f"{clip_id}: the footage is from {day(min(stamps))} and the telemetry from "
+        f"{day(tel.times[0])}, {gap / 86400:.1f} days apart — they cannot be the same "
+        f"session. A VBO carries a time of day and no date, so check the export belongs "
+        f"to this footage; if the camera clock is wrong instead, tools/gopro_dates.py "
+        f"resets it from satellite time")
+
+
 def _align_clips(found: list[clips.Clip], tel: T.Telemetry, start_utc: float,
                  manual_s: dict[str, float] | None = None,
                  on_clip: Callable[[int, str], None] | None = None) -> list[dict]:
@@ -124,6 +153,8 @@ def _align_clips(found: list[clips.Clip], tel: T.Telemetry, start_utc: float,
                             else gpmf.read_gps(chunk.path))
             except (gpmf.GpmfError, OSError):
                 pass                      # video without telemetry has to show up too
+        if samples:
+            _refuse_if_another_day(clip_id, samples, tel)
         manual = corrections.get(clip_id, 0.0)
         result = sync.align([s.t_utc for s in samples], [s.speed_kmh for s in samples],
                             tel.times, speeds, session_start_utc=start_utc,

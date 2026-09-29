@@ -4,7 +4,10 @@ import pytest
 
 from conftest import DATA, require_data
 from trackoverlay import cli
-from trackoverlay.session import SessionError, build_session
+from trackoverlay.ingest.gpmf import GpsSample
+from trackoverlay.session import (SessionError, _refuse_if_another_day,
+                                  build_session)
+from trackoverlay.telemetry import Telemetry
 
 CSV_LEAN = DATA / "RaceBox Track Session on 12-09-2026 14-31_lean.csv"
 CSV_CORNERING = DATA / "RaceBox Track Session on 12-09-2026 14-31_corneringG.csv"
@@ -131,3 +134,30 @@ def test_progress_is_reported_and_monotonic():
     assert 0.0 <= fractions[0] and fractions[-1] <= 1.0
     assert all(stage for _, stage in seen)
     assert any("telemetry" in stage for _, stage in seen)
+
+
+def _sample(t: float) -> GpsSample:
+    return GpsSample(t_utc=t, lat=48.0, lon=17.0, alt_m=120.0, speed_kmh=80.0, fix=3)
+
+
+def _one_second_of_telemetry() -> Telemetry:
+    tel = Telemetry(times=[1000.0, 1001.0, 1002.0])
+    tel.add("speed", "speed", "km/h", [80.0, 80.0, 80.0])
+    return tel
+
+
+def test_footage_from_another_day_is_refused_by_name():
+    """A VBO carries a time of day and no date. Dated wrong, the correlation finds nothing,
+    falls back to raw UTC, and the offset becomes days - which renders as a black screen."""
+    stamps = [_sample(1000.0 + 16 * 86400 + i) for i in range(3)]
+
+    with pytest.raises(SessionError, match="days apart"):
+        _refuse_if_another_day("cam_1", stamps, _one_second_of_telemetry())
+
+
+def test_footage_minutes_off_the_logger_is_left_alone():
+    """A camera clock minutes out is ordinary, and a pit-lane clip may sit outside the
+    session altogether. Correlation handles both; refusing them would refuse real work."""
+    stamps = [_sample(1000.0 + 600 + i) for i in range(3)]
+
+    _refuse_if_another_day("cam_1", stamps, _one_second_of_telemetry())
