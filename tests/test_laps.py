@@ -171,3 +171,34 @@ def test_real_session_lap_times():
 
     left, right = L.build_envelope(c["lat"], c["lon"], laps)
     assert len(left) == len(right) == 400
+
+
+def test_the_clock_turns_a_gate_into_one_that_cuts_laps():
+    """Counting passes alone proposes a gate; only crossings can say it is any good.
+
+    A session at Pannonia was lost to this: the winning candidate sat on the lane out of
+    the pits, which runs up to the main straight at a shallow angle. A gate square to the
+    lane is crossed by the racing line some ninety metres to the side, past the end of a
+    line fifty metres long, so not one of six laps registered and the build refused the
+    session outright. Given the clock, the candidates are tried and the one cutting most
+    laps is returned.
+
+    The Pannonia trace is not in the repository, so what is checked here is the other half:
+    a session the old detector already got right must come out of the new path unchanged.
+    """
+    from trackoverlay.ingest import racebox
+    from trackoverlay import telemetry as T
+
+    csv = DATA / "RaceBox Track Session on 12-09-2026 14-31_lean.csv"
+    if not csv.exists():
+        pytest.skip("no RaceBox export")
+    rb = racebox.read_csv(csv)
+    c = rb.columns
+    heading = T.heading_from_track(c["lat"], c["lon"])
+
+    blind = L.detect_start_finish(c["lat"], c["lon"], heading, c["speed_kmh"])
+    checked = L.detect_start_finish(c["lat"], c["lon"], heading, c["speed_kmh"], rb.times)
+
+    laps = L.split_laps(rb.times, L.find_crossings(c["lat"], c["lon"], rb.times, checked))
+    assert len(laps) == int(max(c["lap"]))
+    assert checked == blind          # a gate that already worked is the one kept

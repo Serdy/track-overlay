@@ -31,6 +31,8 @@ MIN_GATE_SPEED_KMH = 30.0    # gates are looked for on fast sections, not in the
 CANDIDATE_STEP = 25          # every Nth point is a gate candidate
 MATCH_RADIUS_M = 22.0        # tolerance when counting passes through a candidate
 MATCH_BEARING_DEG = 50.0     # and a heading tolerance: the opposite direction does not count
+SHORTLIST = 60               # how many distinct places are tried as gates before giving up
+SPREAD_M = 60.0              # and how far apart they have to be to count as another place
 
 
 class LapError(Exception):
@@ -90,11 +92,17 @@ def _bearing_delta(a: float, b: float) -> float:
     return abs((b - a + 180.0) % 360.0 - 180.0)
 
 
-def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
-    """Finds the point the track passes most often in the same direction.
+def detect_start_finish(lats, lons, headings, speeds_kmh, times=None) -> Gate:
+    """Finds a point the track passes often in the same direction, that laps can be cut at.
 
-    Same approach as in ``DDA_Reader``: walk the candidates and count passes separated in
-    time, so that adjacent samples of one pass are not counted as several.
+    Passes are counted as in ``DDA_Reader``: walk the candidates and count passes separated
+    in time, so that adjacent samples of one pass are not counted as several.
+
+    Counting passes alone is not enough, which a session at Pannonia showed. The winning
+    candidate sat on a line the rider took once; the other six laps went past it ninety
+    metres away, further than the gate line is long, and the session came out with no laps
+    at all. So the best candidates are then tried as gates, and the first that actually
+    cuts a lap is the one returned - the count proposes, the crossings decide.
     """
     lats, lons = np.asarray(lats, float), np.asarray(lons, float)
     headings, speeds = np.asarray(headings, float), np.asarray(speeds_kmh, float)
@@ -106,7 +114,7 @@ def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
     frame = LocalFrame(float(lats[fast].mean()), float(lons[fast].mean()))
     x, y = frame.to_xy(lats, lons)
 
-    best_count, best_index = 0, int(fast[0])
+    scored: list[tuple[int, int]] = []
     for candidate in fast[::CANDIDATE_STEP]:
         distance = np.hypot(x[fast] - x[candidate], y[fast] - y[candidate])
         near = fast[(distance < MATCH_RADIUS_M)]
@@ -114,11 +122,39 @@ def detect_start_finish(lats, lons, headings, speeds_kmh) -> Gate:
                      for i in near]]
         # Adjacent samples of one pass collapse into one: only the breaks are counted.
         passes = 1 + int(np.count_nonzero(np.diff(near) > 1)) if len(near) else 0
-        if passes > best_count:
-            best_count, best_index = passes, int(candidate)
+        scored.append((passes, int(candidate)))
 
-    return Gate(float(lats[best_index]), float(lons[best_index]),
-                float(headings[best_index]))
+    scored.sort(key=lambda row: -row[0])
+    gates = [Gate(float(lats[i]), float(lons[i]), float(headings[i])) for _, i in scored]
+
+    if times is not None:
+        clock = np.asarray(times, float)
+        # Neighbouring candidates are a second apart on the same line, so a shortlist taken
+        # straight off the top would spend itself on twelve versions of one bad place. Only
+        # candidates a gate's length apart count as somewhere else to try.
+        tried: list[tuple[float, float]] = []
+        best: tuple[int, Gate] | None = None
+        for passes, index in scored:
+            spot = (float(x[index]), float(y[index]))
+            if any(math.hypot(spot[0] - px, spot[1] - py) < SPREAD_M for px, py in tried):
+                continue
+            tried.append(spot)
+            gate = Gate(float(lats[index]), float(lons[index]), float(headings[index]))
+            cut = len(split_laps(clock, find_crossings(lats, lons, clock, gate)))
+            # Most laps rather than the first to cut one: a gate square to a lane running
+            # alongside the circuit still catches a crossing or two, and picking that would
+            # hand back a session of one lap where there were six. Candidates are walked in
+            # order of passes, so an equal count keeps the one that was counted best.
+            if best is None or cut > best[0]:
+                best = (cut, gate)
+            if len(tried) >= SHORTLIST:
+                break
+        if best is not None and best[0] >= 1:
+            return best[1]
+
+    # Nothing cut a lap - hand back the best-counted gate anyway, so the caller reports a
+    # session without laps rather than a gate that was never looked for.
+    return gates[0]
 
 
 def find_crossings(lats, lons, times, gate: Gate, *,

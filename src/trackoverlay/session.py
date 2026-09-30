@@ -217,7 +217,7 @@ def build_session(racebox_files: list[Path], video_files: list[Path],
 
     lats, lons = tel["lat"], tel["lon"]
     gate = L.detect_start_finish(lats, lons, T.heading_from_track(lats, lons),
-                                 tel["speed"])
+                                 tel["speed"], tel.times)
     crossings = L.find_crossings(lats, lons, tel.times, gate)
     found_laps = L.split_laps(tel.times, crossings)
     if not found_laps:
