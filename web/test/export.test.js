@@ -216,3 +216,39 @@ test('polling wakes as soon as the page is looked at again', async () => {
   global.setTimeout = realTimeout;
   delete global.document;
 });
+
+test('an encoder that never finishes a frame is reported, not waited on', async () => {
+  // Safari accepts the doubled 2160p frame and then encodes nothing. Without this the
+  // export sits at its first percent with no error anywhere.
+  const encoder = {
+    encodeQueueSize: OverlayExport.QUEUE_LIMIT + 5,
+    ondequeue: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+
+  await assert.rejects(OverlayExport.drain(encoder, 20), /has not finished a frame/);
+});
+
+test('a queue that drains before the stall timer resolves normally', async () => {
+  let listener = null;
+  const encoder = {
+    encodeQueueSize: OverlayExport.QUEUE_LIMIT + 5,
+    ondequeue: null,
+    addEventListener: (_, fn) => { listener = fn; },
+    removeEventListener: () => { listener = null; },
+  };
+  const waiting = OverlayExport.drain(encoder, 5000);
+  encoder.encodeQueueSize = 0;
+  listener();
+  await waiting;
+  assert.strictEqual(listener, null);
+});
+
+test('the 2160p overlay frame has a codec to go to', () => {
+  // 3840x4320 is past level 5.1; something in the list has to be able to take it.
+  const levels = OverlayExport.CANDIDATES
+    .filter((c) => c.codec.startsWith('avc1.'))
+    .map((c) => parseInt(c.codec.slice(-2), 16));
+  assert.ok(Math.max(...levels) >= 60, `highest H.264 level is ${Math.max(...levels)}`);
+});

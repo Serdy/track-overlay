@@ -92,6 +92,14 @@ off. So the overlay is written as a frame of double height, colour on top and a 
 matte below, and ffmpeg puts them back together with `alphamerge`. One encode and one
 file, so the halves cannot drift apart.
 
+The frame size decides the level, not compatibility. A 2160p export doubles to
+3840x4320, which is 16.6 megapixels against the 9.4 that level 5.1 allows, so the list
+carries level 6.0 as well. A browser that reports support it does not have is worse than
+one that refuses: nothing throws, the encode queue never empties, and the export sits at
+its first percent for as long as anyone will watch it. Hence the stall timer on the
+drain - thirty seconds without a finished frame is an error, with the output size named
+as the thing to change.
+
 The codec matters more than it looks. Apple Silicon has no hardware VP9 encoder, so
 libvpx runs in software across several cores — 380-430% CPU against 50-95% for hardware
 H.264, at the same throughput. H.264 has to be asked for at level 5.1 or above, because

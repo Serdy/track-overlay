@@ -33,9 +33,19 @@ const OverlayExport = (function () {
   const CANDIDATES = [
     { codec: 'avc1.640033', container: 'mp4', track: 'avc', hardware: true },
     { codec: 'avc1.640033', container: 'mp4', track: 'avc' },
+    // Level 6.0, for the doubled 2160p frame. 3840x4320 is 16.6 megapixels and level 5.1
+    // stops at 9.4, so without this a 4K export falls all the way through to software VP9
+    // - or, in a browser that reports support it does not have, stalls on the first frame.
+    { codec: 'avc1.64003C', container: 'mp4', track: 'avc', hardware: true },
+    { codec: 'avc1.64003C', container: 'mp4', track: 'avc' },
     { codec: 'vp09.00.10.08', container: 'webm', track: 'V_VP9' },
     { codec: 'vp8', container: 'webm', track: 'V_VP8' },
   ];
+
+  // An encoder that accepts a configuration it cannot actually run fails in no way at all:
+  // the queue simply never empties, and the export sits at its first percent for as long
+  // as anyone is willing to watch. A stall is reported instead of waited on.
+  const STALL_MS = 30000;
 
   function supported() {
     return typeof VideoEncoder !== 'undefined'
@@ -106,22 +116,37 @@ const OverlayExport = (function () {
    * Driven by the encoder's own `dequeue` event where the browser has it, which is both
    * exact and free of polling; otherwise by yielding until the queue comes down.
    */
-  function drain(encoder) {
+  function drain(encoder, stallMs = STALL_MS) {
     if (encoder.encodeQueueSize <= QUEUE_LIMIT) return Promise.resolve();
-    if ('ondequeue' in encoder) {
-      return new Promise((resolve) => {
-        const check = () => {
-          if (encoder.encodeQueueSize > QUEUE_LIMIT) return;
-          encoder.removeEventListener('dequeue', check);
-          resolve();
-        };
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const listens = 'ondequeue' in encoder;
+
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (listens) encoder.removeEventListener('dequeue', check);
+        if (error) reject(error); else resolve();
+      };
+      const check = () => {
+        if (encoder.encodeQueueSize > QUEUE_LIMIT) return;
+        finish(null);
+      };
+      const timer = setTimeout(() => finish(new Error(
+        `the browser's encoder has not finished a frame in ${Math.round(stallMs / 1000)} s `
+        + '— try a smaller output size, or another browser')), stallMs);
+
+      if (listens) {
         encoder.addEventListener('dequeue', check);
         check();
-      });
-    }
-    return (async () => {
-      while (encoder.encodeQueueSize > QUEUE_LIMIT) await yieldToLoop();
-    })();
+      } else {
+        (async () => {
+          while (!settled && encoder.encodeQueueSize > QUEUE_LIMIT) await yieldToLoop();
+          check();
+        })();
+      }
+    });
   }
 
   /**
@@ -208,7 +233,7 @@ const OverlayExport = (function () {
     });
   }
 
-  return { QUEUE_LIMIT, CANDIDATES, supported, pickCodec, makeMuxer, stack,
+  return { QUEUE_LIMIT, STALL_MS, CANDIDATES, supported, pickCodec, makeMuxer, stack,
            yieldToLoop, drain, render };
 }());
 
