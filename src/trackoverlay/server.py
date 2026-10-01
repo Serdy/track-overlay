@@ -793,7 +793,8 @@ class Handler(BaseHTTPRequestHandler):
                 prepared = render_module.prepare_clips(session, work_dir, project.root)
                 plan = render_module.build_plan(
                     prepared, layout, overlay, output,
-                    duration_s=request.get("duration"))
+                    duration_s=request.get("duration"),
+                    overlay_size=render_module.layer_size(overlay))
 
                 def tick(done: float) -> None:
                     job.progress = done

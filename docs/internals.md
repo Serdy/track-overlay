@@ -94,11 +94,16 @@ file, so the halves cannot drift apart.
 
 The frame size decides the level, not compatibility. A 2160p export doubles to
 3840x4320, which is 16.6 megapixels against the 9.4 that level 5.1 allows, so the list
-carries level 6.0 as well. A browser that reports support it does not have is worse than
-one that refuses: nothing throws, the encode queue never empties, and the export sits at
-its first percent for as long as anyone will watch it. Hence the stall timer on the
-drain - thirty seconds without a finished frame is an error, with the output size named
-as the thing to change.
+carries level 6.0 as well - and in practice no encoder tested takes that frame as H.264
+at any level. So the layer is not tied to the output: `pickLayer` drops it to half the
+frame when that is what gets a hardware encoder, and ffmpeg scales it on. Layout is held
+in fractions of the frame, which is what makes this a free trade - the same arrangement,
+drawn softer. A browser that reports support it does not have is worse than one that
+refuses: nothing throws, the encode queue never empties, and the export sits at its first
+percent for as long as anyone will watch it. Hence the stall timer on the drain - thirty
+seconds without a finished frame is an error. The render reads the layer's real size off
+the file with ffprobe rather than being told, and skips the scaler when it already
+matches.
 
 The codec matters more than it looks. Apple Silicon has no hardware VP9 encoder, so
 libvpx runs in software across several cores — 380-430% CPU against 50-95% for hardware

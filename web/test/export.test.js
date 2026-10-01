@@ -252,3 +252,45 @@ test('the 2160p overlay frame has a codec to go to', () => {
     .map((c) => parseInt(c.codec.slice(-2), 16));
   assert.ok(Math.max(...levels) >= 60, `highest H.264 level is ${Math.max(...levels)}`);
 });
+
+// --- how big a layer to draw -------------------------------------------------
+
+test('the layer stays at output size when H.264 takes it', async () => {
+  stubEncoder(['avc1.640033', 'vp09.00.10.08']);
+  const picked = await OverlayExport.pickLayer(1920, 1080, 60);
+  assert.deepStrictEqual([picked.width, picked.height], [1920, 1080]);
+  assert.strictEqual(picked.chosen.container, 'mp4');
+});
+
+test('a half-size layer in H.264 beats a full-size one in software VP9', async () => {
+  // 3840x4320 is past every H.264 level; 1920x2160 is not. Software VP9 at 4K turns a
+  // ten minute export into an afternoon, and the layout is in fractions either way.
+  global.VideoEncoder = {
+    isConfigSupported: async (config) => ({
+      supported: config.codec.startsWith('avc1.')
+        ? config.height <= 2160
+        : true,
+      config,
+    }),
+  };
+  const picked = await OverlayExport.pickLayer(3840, 2160, 60);
+  assert.deepStrictEqual([picked.width, picked.height], [1920, 1080]);
+  assert.strictEqual(picked.chosen.container, 'mp4');
+});
+
+test('with no H.264 anywhere the full-size layer is kept', async () => {
+  stubEncoder(['vp09.00.10.08']);
+  const picked = await OverlayExport.pickLayer(3840, 2160, 60);
+  assert.deepStrictEqual([picked.width, picked.height], [3840, 2160]);
+  assert.strictEqual(picked.chosen.track, 'V_VP9');
+});
+
+test('a layer size is always even, so yuv420p can take it', async () => {
+  // Only the halved frame fits, and halving an odd number must not leave an odd one.
+  global.VideoEncoder = {
+    isConfigSupported: async (config) => ({ supported: config.height <= 1200, config }),
+  };
+  const picked = await OverlayExport.pickLayer(1918, 1078, 60);
+  assert.strictEqual(picked.width % 2, 0);
+  assert.strictEqual(picked.height % 2, 0);
+});

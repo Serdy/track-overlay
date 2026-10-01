@@ -71,6 +71,34 @@ const OverlayExport = (function () {
     throw new Error('this browser cannot encode H.264, VP9 or VP8');
   }
 
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+
+  /**
+   * The biggest layer this browser will encode as H.264, down to half the output frame.
+   *
+   * Layout is held in fractions of the frame, so a smaller layer is the same arrangement
+   * drawn softer, and ffmpeg scales it onto the video. Worth the trade at 2160p: the
+   * doubled frame is then 3840x4320, which no encoder tested will take as H.264 at any
+   * level, leaving software VP9 and an export measured in hours - or, in Safari, an
+   * encoder that accepts the configuration and finishes no frame at all.
+   */
+  async function pickLayer(width, height, fps) {
+    let fallback = null;
+    for (const [w, h] of [[width, height], [even(width / 2), even(height / 2)]]) {
+      let chosen = null;
+      try {
+        chosen = await pickCodec(w, h * 2, fps);
+      } catch (error) {
+        continue;                       // nothing at this size; try the smaller one
+      }
+      if (chosen.container === 'mp4') return { width: w, height: h, chosen };
+      // VP9 at full size is kept only in case the smaller frame has nothing better.
+      if (fallback === null) fallback = { width: w, height: h, chosen };
+    }
+    if (fallback) return fallback;
+    throw new Error('this browser cannot encode H.264, VP9 or VP8');
+  }
+
   /** A muxer for the chosen container, with the same interface either way. */
   function makeMuxer(chosen, width, height, fps) {
     if (chosen.container === 'mp4') {
@@ -181,13 +209,19 @@ const OverlayExport = (function () {
   async function render({ width, height, fps, from, to, drawFrame, onProgress, signal }) {
     if (!supported()) throw new Error('this browser has no WebCodecs support');
 
-    const chosen = await pickCodec(width, height * 2, fps);
-    const layer = new OffscreenCanvas(width, height);
-    const scratch = new OffscreenCanvas(width, height);
-    const stacked = new OffscreenCanvas(width, height * 2);
+    // The layer has its own frame, which is the output frame unless this browser cannot
+    // encode one that big. Everything below is drawn and encoded at the layer's size.
+    const picked = await pickLayer(width, height, fps);
+    const { chosen } = picked;
+    const lw = picked.width;
+    const lh = picked.height;
+
+    const layer = new OffscreenCanvas(lw, lh);
+    const scratch = new OffscreenCanvas(lw, lh);
+    const stacked = new OffscreenCanvas(lw, lh * 2);
     const layerCtx = layer.getContext('2d', { alpha: true });
 
-    const muxer = makeMuxer(chosen, width, height * 2, fps);
+    const muxer = makeMuxer(chosen, lw, lh * 2, fps);
 
     let failure = null;
     const encoder = new VideoEncoder({
@@ -204,9 +238,9 @@ const OverlayExport = (function () {
         throw new Error('cancelled');
       }
       const t = from + i / fps;
-      layerCtx.clearRect(0, 0, width, height);
-      drawFrame(layerCtx, t, { width, height });
-      stack(stacked, layer, scratch, width, height);
+      layerCtx.clearRect(0, 0, lw, lh);
+      drawFrame(layerCtx, t, { width: lw, height: lh });
+      stack(stacked, layer, scratch, lw, lh);
 
       const frame = new VideoFrame(stacked, {
         timestamp: Math.round((i / fps) * 1e6),
@@ -233,7 +267,8 @@ const OverlayExport = (function () {
     });
   }
 
-  return { QUEUE_LIMIT, STALL_MS, CANDIDATES, supported, pickCodec, makeMuxer, stack,
+  return { QUEUE_LIMIT, STALL_MS, CANDIDATES, supported, pickCodec, pickLayer,
+           makeMuxer, stack,
            yieldToLoop, drain, render };
 }());
 

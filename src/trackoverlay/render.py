@@ -192,8 +192,15 @@ def _take(kept: list[tuple[float, float]],
 
 
 def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
-               *, bitrate: str = DEFAULT_BITRATE, duration_s: float | None = None) -> Plan:
-    """Assembles the ffmpeg argument list without running anything."""
+               *, bitrate: str = DEFAULT_BITRATE, duration_s: float | None = None,
+               overlay_size: tuple[int, int] | None = None) -> Plan:
+    """Assembles the ffmpeg argument list without running anything.
+
+    `overlay_size` is the layer's own frame, which need not be the output frame: no
+    hardware encoder tested will take the doubled 2160p frame, and a layer drawn in
+    fractions of its frame is the same arrangement at any size. Left out, the layer is
+    assumed to match the output exactly, which is the case at 1080p and costs no scaler.
+    """
     out = layout.get("output", {})
     width, height = _even(out.get("width", 1920)), _even(out.get("height", 1080))
     fps = out.get("fps", 60)
@@ -354,8 +361,14 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
         # The layer arrives as a double-height frame: colour on top, a greyscale matte of
         # the alpha channel below. No browser tested would encode real transparency, so
         # the two halves travel together in one file and are put back together here.
-        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:0,setsar=1[ovc]")
-        steps.append(f"[{overlay_index}:v]crop={width}:{height}:0:{height},setsar=1[ovm]")
+        layer_w, layer_h = overlay_size or (width, height)
+        # Scaling only when it is needed: laying a 1920x1080 layer onto a 1920x1080 frame
+        # through a scaler is not free, and that is the common case.
+        fit = "" if (layer_w, layer_h) == (width, height) else f",scale={width}:{height}"
+        steps.append(
+            f"[{overlay_index}:v]crop={layer_w}:{layer_h}:0:0{fit},setsar=1[ovc]")
+        steps.append(
+            f"[{overlay_index}:v]crop={layer_w}:{layer_h}:0:{layer_h}{fit},setsar=1[ovm]")
         steps.append("[ovc][ovm]alphamerge[ov]")
         steps.append(f"{label}[ov]overlay=0:0[out]")
         label = "[out]"
@@ -365,6 +378,27 @@ def build_plan(session: dict, layout: dict, overlay: Path | None, output: Path,
     args += ["-c:v", video_codec(), "-b:v", bitrate, "-r", str(fps),
              "-t", f"{output_duration:.3f}", "-pix_fmt", "yuv420p", str(output)]
     return Plan(args=args, duration_s=output_duration, inputs=inputs)
+
+
+def layer_size(overlay: Path | None) -> tuple[int, int] | None:
+    """The overlay layer's own frame, read off the file the browser produced.
+
+    The file is double height - colour over matte - so the layer is half of it. Probed
+    rather than agreed in advance: the browser picks whatever size it can actually encode,
+    and a number passed alongside would be one more thing to keep in step with the file.
+    """
+    if overlay is None:
+        return None
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(overlay)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, check=True).stdout.strip()
+        width, _, height = out.partition("x")
+        return int(width), int(height) // 2
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return None                      # let the plan assume the output size, as before
 
 
 def check_footage(session: dict, root: Path | None = None) -> None:

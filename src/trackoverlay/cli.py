@@ -69,7 +69,8 @@ def _render(args: argparse.Namespace) -> int:
     prepared = render_module.prepare_clips(session, args.output.parent / "work",
                                            args.session.parent)
     plan = render_module.build_plan(prepared, layout, overlay, args.output,
-                                    duration_s=args.duration)
+                                    duration_s=args.duration,
+                                    overlay_size=render_module.layer_size(overlay))
     print(f"rendering {plan.duration_s / 60:.1f} min from {len(plan.inputs)} input(s)"
           + ("" if overlay else ", no overlay layer"))
 
