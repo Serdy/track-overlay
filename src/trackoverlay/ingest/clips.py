@@ -105,6 +105,7 @@ def probe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "csv=p=0", str(path)],
+        stdin=subprocess.DEVNULL,
         capture_output=True, text=True, check=True).stdout.strip()
     return float(out)
 
@@ -114,6 +115,7 @@ def probe_size(path: Path) -> tuple[int, int]:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        stdin=subprocess.DEVNULL,
         capture_output=True, text=True, check=True).stdout.strip()
     width, _, height = out.partition("x")
     return int(width), int(height)

@@ -535,7 +535,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(HTTPStatus.NOT_IMPLEMENTED,
                                "the file dialog is wired up for macOS only; "
                                "use the build command instead")
-        done = subprocess.run(["osascript", "-e", CHOOSE_SCRIPT],
+        done = subprocess.run(["osascript", "-e", CHOOSE_SCRIPT], stdin=subprocess.DEVNULL,
                               capture_output=True, text=True)
         if done.returncode != 0:
             detail = (done.stderr or "").strip()

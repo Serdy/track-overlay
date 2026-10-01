@@ -70,6 +70,7 @@ def find_gpmd_stream(mp4: Path) -> int:
         ["ffprobe", "-v", "error", "-select_streams", "d",
          "-show_entries", "stream=index,codec_tag_string",
          "-of", "csv=p=0", str(mp4)],
+        stdin=subprocess.DEVNULL,
         capture_output=True, text=True, check=True).stdout
     for line in out.splitlines():
         parts = line.split(",")
@@ -87,9 +88,15 @@ def extract_gpmd(mp4: Path) -> bytes:
     idx = find_gpmd_stream(mp4)
     with tempfile.TemporaryDirectory() as tmp:
         dst = Path(tmp) / "gpmd.bin"
+        # stdin closed, as everywhere a child is spawned here: ffmpeg reads the terminal
+        # for its interactive keys, and a server left running in the background of a shell
+        # is not the foreground process group - so that read earns it a SIGTTIN and the
+        # process stops. It keeps the port and the job, answers nothing, and an export sits
+        # at a third forever with no error anywhere.
         subprocess.run(
             ["ffmpeg", "-v", "error", "-y", "-i", str(mp4), "-codec", "copy",
-             "-map", f"0:{idx}", "-f", "rawvideo", str(dst)], check=True)
+             "-map", f"0:{idx}", "-f", "rawvideo", str(dst)],
+            stdin=subprocess.DEVNULL, check=True)
         return dst.read_bytes()
 
 

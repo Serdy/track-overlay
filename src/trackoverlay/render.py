@@ -425,7 +425,11 @@ def parse_progress(line: str, duration_s: float) -> float | None:
 
 def run(plan: Plan, *, on_progress=None) -> None:
     """Runs the plan, reporting progress as a fraction between 0 and 1."""
-    process = subprocess.Popen(plan.args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    # stdin closed: ffmpeg reads the terminal for its interactive keys, and a background
+    # server is not the foreground process group, so the read stops the process. The render
+    # then hangs with the progress bar wherever it stood and nothing in any log.
+    process = subprocess.Popen(plan.args, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, bufsize=1)
     try:
         for line in process.stdout:
