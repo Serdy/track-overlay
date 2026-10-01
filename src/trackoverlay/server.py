@@ -236,9 +236,26 @@ class Handler(BaseHTTPRequestHandler):
         """Serves a file, honouring partial requests."""
         if not path.exists():
             return self._error(HTTPStatus.NOT_FOUND, f"no file {path.name}")
+        # Opened before a single header goes out. Opened after, as it used to be, a file
+        # the server may not read becomes a promised Content-Length with no body: the
+        # browser reports a length mismatch and the player stays black, with the real
+        # reason only in the server's traceback. macOS grants access to removable volumes
+        # per application, so footage on a card is exactly the file this happens to.
+        try:
+            handle = path.open("rb")
+        except OSError as err:
+            return self._error(
+                HTTPStatus.FORBIDDEN,
+                f"cannot read {path.name}: {err.strerror}. If it is on a card or an "
+                f"external drive, the terminal running the server has to be allowed to "
+                f"reach it — System Settings, Privacy & Security, Files and Folders")
         size = path.stat().st_size
         media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
+        with handle:
+            self._send_open_file(handle, path, size, media_type)
+
+    def _send_open_file(self, handle, path: Path, size: int, media_type: str) -> None:
         try:
             span = parse_range(self.headers.get("Range"), size)
         except RangeError:
@@ -271,14 +288,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         remaining = end - start + 1
-        with path.open("rb") as handle:
-            handle.seek(start)
-            while remaining > 0:
-                block = handle.read(min(CHUNK, remaining))
-                if not block:
-                    break
-                self.wfile.write(block)
-                remaining -= len(block)
+        handle.seek(start)
+        while remaining > 0:
+            block = handle.read(min(CHUNK, remaining))
+            if not block:
+                break
+            self.wfile.write(block)
+            remaining -= len(block)
 
     # --- routing ----------------------------------------------------------------
 

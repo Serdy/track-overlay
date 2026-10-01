@@ -15,6 +15,7 @@ Everything produced goes to `out/`, which the source scan skips - otherwise the 
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import unicodedata
@@ -97,7 +98,7 @@ class Project:
 
 
 def _missing_footage(project: "Project") -> list[dict]:
-    """Files the session names that are no longer on disk.
+    """Files the session names that are no longer on disk, or cannot be read.
 
     Worth saying out loud: the editor shows a black slot and the render dies at the far
     end of a long ffmpeg command line, neither of which points at the camera involved.
@@ -112,7 +113,11 @@ def _missing_footage(project: "Project") -> list[dict]:
     gone = []
     for clip in payload.get("clips") or []:
         for name in clip.get("files") or []:
-            if not resolve_source(name, project.root).exists():
+            found = resolve_source(name, project.root)
+            # Unreadable counts as gone. A card the server is not allowed to open is
+            # present in every way a path can be checked, and silently black everywhere
+            # it is used, which is worse than absent.
+            if not found.exists() or not os.access(found, os.R_OK):
                 gone.append({"clip": clip.get("id"), "name": Path(name).name,
                              "path": str(name)})
     return gone
