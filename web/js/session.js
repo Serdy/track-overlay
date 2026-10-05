@@ -78,6 +78,22 @@ const SessionModel = (function () {
     return lap ? t - lap.t_start : null;
   }
 
+  /**
+   * The fastest the session ever went, rounded up to a round number.
+   *
+   * The speed bar is drawn against this rather than a fixed ceiling. A constant generous
+   * enough for a litre bike leaves two thirds of the bar dead on a 600, and one that fits
+   * a 600 pins at the end of every straight. Rounding up stops the scale being set by one
+   * noisy sample, and makes a full bar mean the fastest this rider actually went.
+   */
+  function topSpeed(session, step = 20) {
+    const channel = session.channels && session.channels.speed;
+    if (!channel || !channel.samples.length) return step;
+    let top = 0;
+    for (const value of channel.samples) if (value > top) top = value;
+    return Math.max(step, Math.ceil(top / step) * step);
+  }
+
   function clipById(session, id) {
     return session.clips.find((clip) => clip.id === id) || null;
   }
@@ -114,7 +130,7 @@ const SessionModel = (function () {
 
   return {
     load, sampleAt, sampleMany, positionAt, channelLength,
-    lapAt, bestLap, lapTime, clipById, clipTime, chunkAt,
+    lapAt, bestLap, lapTime, topSpeed, clipById, clipTime, chunkAt,
   };
 }());
 

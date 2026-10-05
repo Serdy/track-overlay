@@ -9,6 +9,7 @@ require('../js/widgets/accel.js');
 require('../js/widgets/laptime.js');
 require('../js/widgets/laplist.js');
 require('../js/widgets/leandial.js');
+require('../js/widgets/speedbar.js');
 
 /** Fake canvas context: records calls and catches non-finite coordinates. */
 function fakeCtx() {
@@ -43,7 +44,7 @@ test('the registry knows the widgets and invents none', () => {
   // The map require sits further down the file but runs on load, before any test body.
   assert.deepStrictEqual(Widgets.ids().sort(),
                          ['accel', 'laplist', 'laptime', 'lean', 'leandial', 'map',
-                          'speed']);
+                          'speed', 'speedbar']);
   assert.strictEqual(Widgets.get('no such thing'), null);
 });
 
@@ -354,4 +355,38 @@ test('a trail with nothing to compare against stays neutral', () => {
     assert.ok(Math.abs(r - g) < 6 && Math.abs(g - b) < 6,
               `expected neutral for ${gain}, got ${r},${g},${b}`);
   }
+});
+
+// --- speed and throttle in one strip -----------------------------------------
+
+test('the strip fills in proportion to the session top speed', () => {
+  const bar = Widgets.get('speedbar');
+  assert.strictEqual(bar._fill(0, 220), 0);
+  assert.strictEqual(bar._fill(110, 220), 0.5);
+  assert.strictEqual(bar._fill(220, 220), 1);
+  assert.strictEqual(bar._fill(240, 220), 1, 'a faster lap than the scale still fits');
+  assert.strictEqual(bar._fill(120, 0), 0, 'no scale yet is not a division by zero');
+});
+
+test('coasting leaves the strip uncoloured', () => {
+  // Most of a lap is neither on the throttle nor on the brakes, and a strip that is
+  // always green says nothing by being green.
+  const bar = Widgets.get('speedbar');
+  const ctx = fakeCtx();
+  bar.draw(ctx, { x: 0, y: 0, w: 400, h: 60 },
+           { speed: 120, topSpeed: 220, scoreSide: 0, scoreColor: '#29d175' });
+  assert.ok(!ctx.calls.some((c) => c.name === 'fillStyle' && c.args[0] === '#29d175'));
+});
+
+test('on the throttle the strip takes the score colour', () => {
+  const bar = Widgets.get('speedbar');
+  const ctx = fakeCtx();
+  bar.draw(ctx, { x: 0, y: 0, w: 400, h: 60 },
+           { speed: 120, topSpeed: 220, scoreSide: 1, scoreColor: '#29d175' });
+  assert.ok(ctx.calls.some((c) => c.name === 'fillStyle' && c.args[0] === '#29d175'));
+});
+
+test('the strip draws with nothing in the frame at all', () => {
+  const bar = Widgets.get('speedbar');
+  bar.draw(fakeCtx(), { x: 0, y: 0, w: 400, h: 60 }, {});   // must not throw
 });
