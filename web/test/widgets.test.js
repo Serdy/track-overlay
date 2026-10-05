@@ -359,31 +359,44 @@ test('a trail with nothing to compare against stays neutral', () => {
 
 // --- speed and throttle in one strip -----------------------------------------
 
-test('the strip fills in proportion to the session top speed', () => {
+test('the bar grows out of the middle, right on power and left on brakes', () => {
   const bar = Widgets.get('speedbar');
-  assert.strictEqual(bar._fill(0, 220), 0);
-  assert.strictEqual(bar._fill(110, 220), 0.5);
-  assert.strictEqual(bar._fill(220, 220), 1);
-  assert.strictEqual(bar._fill(240, 220), 1, 'a faster lap than the scale still fits');
-  assert.strictEqual(bar._fill(120, 0), 0, 'no scale yet is not a division by zero');
+  assert.strictEqual(bar._reach(0), 0);
+  assert.strictEqual(bar._reach(1), 0.5, 'full throttle reaches the right-hand end');
+  assert.strictEqual(bar._reach(-1), -0.5, 'full braking reaches the left-hand one');
+  assert.strictEqual(bar._reach(0.5), 0.25);
+  assert.strictEqual(bar._reach(-2), -0.5, 'a score past the scale still fits');
 });
 
-test('coasting leaves the strip uncoloured', () => {
-  // Most of a lap is neither on the throttle nor on the brakes, and a strip that is
-  // always green says nothing by being green.
+test('braking draws to the left of the middle, power to the right', () => {
   const bar = Widgets.get('speedbar');
-  const ctx = fakeCtx();
-  bar.draw(ctx, { x: 0, y: 0, w: 400, h: 60 },
-           { speed: 120, topSpeed: 220, scoreSide: 0, scoreColor: '#29d175' });
-  assert.ok(!ctx.calls.some((c) => c.name === 'fillStyle' && c.args[0] === '#29d175'));
+  const box = { x: 0, y: 0, w: 400, h: 60 };
+  const mid = box.x + box.w * 0.04 + (box.w * 0.92) / 2;
+
+  const barsOf = (score) => {
+    const ctx = fakeCtx();
+    bar.draw(ctx, box, { speed: 120, score, scoreColor: '#fff' });
+    // Three rounded rects go down in order: the plate, the track, then the bar.
+    return ctx.calls.filter((c) => c.name === 'roundRect').map((c) => c.args);
+  };
+
+  const braking = barsOf(-0.8)[2];
+  const power = barsOf(0.8)[2];
+  assert.ok(braking[0] < mid, `braking should start left of ${mid}, got ${braking[0]}`);
+  assert.ok(braking[0] + braking[2] <= mid + 0.01, 'and end at the middle');
+  assert.ok(Math.abs(power[0] - mid) < 0.01, 'power should start at the middle');
 });
 
-test('on the throttle the strip takes the score colour', () => {
+test('the speed sits in the middle of the strip', () => {
   const bar = Widgets.get('speedbar');
   const ctx = fakeCtx();
-  bar.draw(ctx, { x: 0, y: 0, w: 400, h: 60 },
-           { speed: 120, topSpeed: 220, scoreSide: 1, scoreColor: '#29d175' });
-  assert.ok(ctx.calls.some((c) => c.name === 'fillStyle' && c.args[0] === '#29d175'));
+  const box = { x: 0, y: 0, w: 400, h: 60 };
+  bar.draw(ctx, box, { speed: 129, score: 0 });
+
+  const shown = ctx.calls.filter((c) => c.name === 'fillText' && c.args[0] === '129');
+  assert.strictEqual(shown.length, 1);
+  const mid = box.x + box.w * 0.04 + (box.w * 0.92) / 2;
+  assert.ok(Math.abs(shown[0].args[1] - mid) < 0.01, 'drawn at the middle');
 });
 
 test('the strip draws with nothing in the frame at all', () => {

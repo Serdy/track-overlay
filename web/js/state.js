@@ -37,7 +37,6 @@
   let stripTimer = null;
   let lastWheel = 0;
   let lapModel = null;
-  let topSpeed = 0;
   let able = { file_dialog: true, reveal: true, data_root: 'data' };
 
   // Default layout. Positions are fractions of the frame — that is exactly what lets
@@ -121,8 +120,6 @@
     // Distance-to-time for the best lap, worked out once: it is a pass over the whole
     // distance channel and the reference lap does not change while the session is open.
     lapModel = LapTimes.build(session);
-    // One pass over the speed channel, for the scale the speed bar is drawn against.
-    topSpeed = SessionModel.topSpeed(session);
     layout = await loadLayout();
 
     // Keep the automatic offset so the manual slider shifts from it, not from zero.
@@ -1122,7 +1119,6 @@
     }
     if (scoreSides) data.scoreSide = Display.at(scoreSides, session, time);
 
-    data.topSpeed = topSpeed;
     data.laps = LapTimes.stateAt(lapModel, session, time);
     data.lapList = LapTimes.boardAt(lapModel, time);
     data.map = prepareMap(frame, arrangement);
