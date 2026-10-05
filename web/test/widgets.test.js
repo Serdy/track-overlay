@@ -376,12 +376,12 @@ test('braking draws to the left of the middle, power to the right', () => {
   const barsOf = (score) => {
     const ctx = fakeCtx();
     bar.draw(ctx, box, { speed: 120, score, scoreColor: '#fff' });
-    // Three rounded rects go down in order: the plate, the track, then the bar.
-    return ctx.calls.filter((c) => c.name === 'roundRect').map((c) => c.args);
+    // The track goes down first, then the bar, then the tick at the middle.
+    return ctx.calls.filter((c) => c.name === 'fillRect').map((c) => c.args);
   };
 
-  const braking = barsOf(-0.8)[2];
-  const power = barsOf(0.8)[2];
+  const braking = barsOf(-0.8)[1];
+  const power = barsOf(0.8)[1];
   assert.ok(braking[0] < mid, `braking should start left of ${mid}, got ${braking[0]}`);
   assert.ok(braking[0] + braking[2] <= mid + 0.01, 'and end at the middle');
   assert.ok(Math.abs(power[0] - mid) < 0.01, 'power should start at the middle');

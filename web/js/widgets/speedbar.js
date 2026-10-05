@@ -29,25 +29,19 @@
       const width = box.w * 0.92;
       const top = box.y + box.h * 0.16;
       const height = box.h * 0.68;
-      const radius = height * 0.22;
       const mid = left + width / 2;
 
-      const round = (x, y, w, h, r) => {
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
-        else ctx.rect(x, y, w, h);
-        ctx.fill();
-      };
-
+      // Square corners, as the broadcast draws them. A rounded bar reads as a pill with a
+      // length; a square one reads as a quantity against a scale, which is what it is.
       ctx.fillStyle = 'rgba(255,255,255,0.10)';
-      round(left, top, width, height, radius);
+      ctx.fillRect(left, top, width, height);
 
       // Out of the middle: right on the throttle, left on the brakes. Half the strip each
       // way, so a full bar means as hard as this session ever went either way.
       const reach = (width / 2) * Math.abs(score);
       if (reach > 0.5) {
         ctx.fillStyle = data.scoreColor || (score < 0 ? '#ff3c2e' : '#29d175');
-        round(score < 0 ? mid - reach : mid, top, reach, height, radius);
+        ctx.fillRect(score < 0 ? mid - reach : mid, top, reach, height);
       }
 
       // The middle marked, or which way the bar has grown is a guess at a glance.
